@@ -12,21 +12,22 @@ import schedule
 import time
 from datetime import datetime
 
-
-
-#st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
+# Ensure this is only in the main app script
+# st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
 
 st.title("API Tenant Management")
 
 issuer = 'cxone.niceincontact.com'
 
-# Initialize variables to avoid NameError
+# Initialize variables to prevent NameErrors
 authHeaders = None
 endpoint = None
 
 def show_login_message():
+    """Display a message prompting the user to enter credentials."""
     st.info("Please enter your credentials in the sidebar to proceed.")
 
+# Sidebar for authentication
 with st.sidebar:
     st.write("Credentials")
     accessId = st.text_input("Enter your Access ID:", key="access_id_sidebar")
@@ -82,6 +83,15 @@ else:
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
+
+# Ensure API calls only run if authentication is successful
+if authHeaders and endpoint:
+    if choice == "Reporting Jobs":
+        from reporting import reporting
+        reporting(authHeaders, endpoint)
+    elif choice == "Scheduling":
+        from scheduling import report_scheduler
+        report_scheduler(authHeaders, endpoint)
 
 
 def fetch_completed_contacts(start_date, start_time, end_date, end_time, top=1000):
@@ -436,47 +446,49 @@ def report_scheduler(authHeaders, endpoint):
     report_get()
 
 
-if choice == "Download MP4":
-    callid = st.text_input("Enter the Call ID: ")
-    if st.button('Submit'):
-        mp4_content, filename = download_mp4_from_callid(callid)
-        if mp4_content and filename:
-            st.download_button(label=f"Download {filename}", data=mp4_content, file_name=filename, mime="video/mp4")
-
-
-elif choice == "Fetch Call Lists":
-    if st.button('Fetch Call Lists'):
-        download_deactivated_call_lists()
-
-
-elif choice == "Delete Deactivated Lists":
-    uploaded_file = st.file_uploader("Upload CSV file of deactivated list IDs to delete", type=["csv"])
-    if uploaded_file:
-        if st.button("Delete Deactivated Lists"):
-            delete_deactivated_lists_from_csv(uploaded_file)
-
-
-elif choice == "Fetch Completed Contacts":
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        start_date = st.date_input("Start Date")
-    with col2:
-        start_time = st.time_input("Start Time")
-    with col3:
-        end_date = st.date_input("End Date")
-    with col4:
-        end_time = st.time_input("End Time")
-    
-    fetch_all = st.checkbox("Fetch All Records")
-    top = st.number_input("Max Records Per Request (1000-10000):", min_value=1000, max_value=10000, value=10000)
-    
-    if st.button("Fetch Completed Contacts"):
-        fetch_completed_contacts(start_date.strftime("%m/%d/%Y"), start_time.strftime("%H:%M"), end_date.strftime("%m/%d/%Y"), end_time.strftime("%H:%M"), fetch_all, top)
-
 if authHeaders and endpoint:
-    if choice == "Reporting Jobs":
+    if choice == "Download MP4":
+        callid = st.text_input("Enter the Call ID:")
+        if st.button('Submit'):
+            mp4_content, filename = download_mp4_from_callid(callid)
+            if mp4_content and filename:
+                st.download_button(label=f"Download {filename}", data=mp4_content, file_name=filename, mime="video/mp4")
+
+    elif choice == "Fetch Call Lists":
+        if st.button('Fetch Call Lists'):
+            download_deactivated_call_lists()
+
+    elif choice == "Delete Deactivated Lists":
+        uploaded_file = st.file_uploader("Upload CSV file of deactivated list IDs to delete", type=["csv"])
+        if uploaded_file:
+            if st.button("Delete Deactivated Lists"):
+                delete_deactivated_lists_from_csv(uploaded_file)
+
+    elif choice == "Fetch Completed Contacts":
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            start_date = st.date_input("Start Date")
+        with col2:
+            start_time = st.time_input("Start Time")
+        with col3:
+            end_date = st.date_input("End Date")
+        with col4:
+            end_time = st.time_input("End Time")
+
+        fetch_all = st.checkbox("Fetch All Records")
+        top = st.number_input("Max Records Per Request (1000-10000):", min_value=1000, max_value=10000, value=10000)
+
+        if st.button("Fetch Completed Contacts"):
+            fetch_completed_contacts(start_date.strftime("%m/%d/%Y"), start_time.strftime("%H:%M"), end_date.strftime("%m/%d/%Y"), end_time.strftime("%H:%M"), fetch_all, top)
+
+    elif choice == "Reporting Jobs":
         from reporting import reporting
         reporting(authHeaders, endpoint)
+
     elif choice == "Scheduling":
         from scheduling import report_scheduler
         report_scheduler(authHeaders, endpoint)
+
+else:
+    st.warning("Please enter credentials in the sidebar before proceeding.")
+
