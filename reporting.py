@@ -357,6 +357,23 @@ def reporting(authHeaders, endpoint):
     with col2:
         st.subheader("Start a Report Job")
         start_job()
+    
+    # Add the input box for the report file URL
+    st.subheader("Download Report File")
+    report_url = st.text_input("Enter Report File URL:", key="report_file_url")
+    if st.button("Download Report"):
+        try:
+            response = requests.get(report_url, headers=authHeaders)
+            if response.status_code == 200:
+                json_data = response.json()
+                encoded_data = json_data['files']['file']
+                file_name = json_data['files']['fileName']
+                decoded_data = base64.b64decode(encoded_data)
+                st.download_button("Download File", decoded_data, file_name)
+            else:
+                st.error(f"Failed to download the file. Status code: {response.status_code}")
+        except Exception as e:
+            st.error(f"Error downloading report: {e}")
 
 
 def report_scheduler(authHeaders, endpoint):
@@ -471,5 +488,3 @@ if authHeaders and endpoint:
 
 else:
     st.warning("Please enter credentials in the sidebar before proceeding.")
-
-
