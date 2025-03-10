@@ -290,7 +290,6 @@ def delete_deactivated_lists_from_csv(uploaded_file):
 
         # Remove the log file if all IDs are processed
         if deleted_count + failed_count == total_ids:
-            import os
             os.remove("processed_ids_log.txt")
 
 
@@ -397,12 +396,12 @@ if authHeaders and endpoint:
             fetch_completed_contacts(start_date.strftime("%m/%d/%Y"), start_time.strftime("%H:%M"), end_date.strftime("%m/%d/%Y"), end_time.strftime("%H:%M"), fetch_all, top)
 
     elif choice == "Reporting Jobs":
-        from reporting import reporting
-        reporting(authHeaders, endpoint)
+        reporting(authHeaders, endpoint)  # Call function directly
 
     elif choice == "Scheduling":
-        from scheduling import report_scheduler
-        report_scheduler(authHeaders, endpoint)
+        report_scheduler(authHeaders, endpoint)  # Call function directly
 
 else:
     st.warning("Please enter credentials in the sidebar before proceeding.")
+
+
