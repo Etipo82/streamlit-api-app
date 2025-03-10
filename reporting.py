@@ -14,7 +14,7 @@ from datetime import datetime
 
 
 
-st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
+#st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
 
 st.title("API Tenant Management")
 
