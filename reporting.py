@@ -362,18 +362,16 @@ def reporting(authHeaders, endpoint):
 def report_scheduler(authHeaders, endpoint):
     st.title("Report Scheduler")
 
-    report_filename = "scheduled_completed_contacts.csv"
+    report_filename_early = "completed_contacts_12AM-2AM.csv"
+    report_filename_morning = "completed_contacts_12AM-8AM.csv"
 
-    def fetch_completed_contacts():
+    def fetch_completed_contacts(start_time, end_time, filename):
         """Fetch and save the completed contacts report automatically."""
         try:
-            start_date = datetime.now().strftime("%m/%d/%Y")
-            start_time = "00:00"
-            end_date = datetime.now().strftime("%m/%d/%Y")
-            end_time = "23:59"
-            top = 10000
+            today_date = datetime.now().strftime("%m/%d/%Y")
+            top = 10000  # Max number of records to fetch
 
-            url = f"{endpoint}/contacts/completed?startDate={start_date}%20{start_time}&endDate={end_date}%20{end_time}&top={top}"
+            url = f"{endpoint}/contacts/completed?startDate={today_date}%20{start_time}&endDate={today_date}%20{end_time}&top={top}"
             st.write(f"DEBUG: Fetching completed contacts report from URL: {url}")
             response = requests.get(url, headers=authHeaders)
             st.write(f"DEBUG: Response Status Code: {response.status_code}")
@@ -382,30 +380,52 @@ def report_scheduler(authHeaders, endpoint):
                 data = response.json()
                 df = pd.DataFrame(data.get("completedContacts", []))
                 if not df.empty:
-                    df.to_csv(report_filename, index=False)
-                    st.success("Completed Contacts Report saved successfully.")
+                    df.to_csv(filename, index=False)
+                    st.success(f"Completed Contacts Report ({start_time}-{end_time}) saved successfully.")
                 else:
-                    st.warning("No data found in the report.")
+                    st.warning(f"No data found in the report ({start_time}-{end_time}).")
             else:
                 st.error(f"Failed to fetch report. Status code: {response.status_code}")
                 st.write(f"DEBUG: Response Content: {response.text}")
         except Exception as e:
             st.error(f"Error fetching completed contacts: {e}")
 
+    def schedule_reports():
+        """Schedule the reports to run at 2:15 AM and 8:15 AM."""
+        schedule.every().day.at("02:15").do(fetch_completed_contacts, "00:00", "02:00", report_filename_early)
+        schedule.every().day.at("08:15").do(fetch_completed_contacts, "00:00", "08:00", report_filename_morning)
+
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # Check every minute
+
     def report_get():
-        """Download the latest scheduled completed contacts report."""
-        if os.path.exists(report_filename):
-            with open(report_filename, "rb") as file:
-                st.download_button("Download Scheduled Completed Contacts Report", file, report_filename, "text/csv")
-        else:
-            st.warning("No scheduled report available. Run the report first.")
+        """Provide download buttons for the latest scheduled completed contacts report."""
+        if os.path.exists(report_filename_early):
+            with open(report_filename_early, "rb") as file:
+                st.download_button("Download 12AM - 2AM Report", file, report_filename_early, "text/csv")
+
+        if os.path.exists(report_filename_morning):
+            with open(report_filename_morning, "rb") as file:
+                st.download_button("Download 12AM - 8AM Report", file, report_filename_morning, "text/csv")
     
     st.sidebar.success("Successfully connected!")
     st.subheader("Automated Completed Contacts Report")
-    if st.button("Run Report Now"):
-        fetch_completed_contacts()
-    st.subheader("Download Report")
+
+    # Manual Execution
+    if st.button("Run 12AM - 2AM Report Now"):
+        fetch_completed_contacts("00:00", "02:00", report_filename_early)
+
+    if st.button("Run 12AM - 8AM Report Now"):
+        fetch_completed_contacts("00:00", "08:00", report_filename_morning)
+
+    st.subheader("Download Reports")
     report_get()
+
+    # Start the background scheduler (only needed once)
+    import threading
+    threading.Thread(target=schedule_reports, daemon=True).start()
+
     
 # Ensure API calls only run if authentication is successful
 if authHeaders and endpoint:
