@@ -29,10 +29,10 @@ def show_login_message():
 
 with st.sidebar:
     st.write("Credentials")
-    accessId = st.text_input("Enter your Access ID:", key="access_id")
-    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret")
-    client_id = st.text_input("Enter your Client ID:", key="client_id")
-    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret")
+    accessId = st.text_input("Enter your Access ID:", key="access_id_sidebar")
+    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret_sidebar")
+    client_id = st.text_input("Enter your Client ID:", key="client_id_sidebar")
+    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret_sidebar")
     
     choice = st.selectbox("Choose an API call:", [
         "Download MP4", 
