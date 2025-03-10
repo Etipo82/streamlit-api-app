@@ -359,6 +359,54 @@ def reporting(authHeaders, endpoint):
         start_job()
 
 
+def report_scheduler(authHeaders, endpoint):
+    st.title("Report Scheduler")
+
+    report_filename = "scheduled_completed_contacts.csv"
+
+    def fetch_completed_contacts():
+        """Fetch and save the completed contacts report automatically."""
+        try:
+            start_date = datetime.now().strftime("%m/%d/%Y")
+            start_time = "00:00"
+            end_date = datetime.now().strftime("%m/%d/%Y")
+            end_time = "23:59"
+            top = 10000
+
+            url = f"{endpoint}/contacts/completed?startDate={start_date}%20{start_time}&endDate={end_date}%20{end_time}&top={top}"
+            st.write(f"DEBUG: Fetching completed contacts report from URL: {url}")
+            response = requests.get(url, headers=authHeaders)
+            st.write(f"DEBUG: Response Status Code: {response.status_code}")
+
+            if response.status_code == 200:
+                data = response.json()
+                df = pd.DataFrame(data.get("completedContacts", []))
+                if not df.empty:
+                    df.to_csv(report_filename, index=False)
+                    st.success("Completed Contacts Report saved successfully.")
+                else:
+                    st.warning("No data found in the report.")
+            else:
+                st.error(f"Failed to fetch report. Status code: {response.status_code}")
+                st.write(f"DEBUG: Response Content: {response.text}")
+        except Exception as e:
+            st.error(f"Error fetching completed contacts: {e}")
+
+    def report_get():
+        """Download the latest scheduled completed contacts report."""
+        if os.path.exists(report_filename):
+            with open(report_filename, "rb") as file:
+                st.download_button("Download Scheduled Completed Contacts Report", file, report_filename, "text/csv")
+        else:
+            st.warning("No scheduled report available. Run the report first.")
+    
+    st.sidebar.success("Successfully connected!")
+    st.subheader("Automated Completed Contacts Report")
+    if st.button("Run Report Now"):
+        fetch_completed_contacts()
+    st.subheader("Download Report")
+    report_get()
+    
 # Ensure API calls only run if authentication is successful
 if authHeaders and endpoint:
     if choice == "Download MP4":
