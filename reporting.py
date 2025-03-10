@@ -30,10 +30,10 @@ def show_login_message():
 # Sidebar for authentication
 with st.sidebar:
     st.write("Credentials")
-    accessId = st.text_input("Enter your Access ID:", key="access_id_sidebar")
-    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret_sidebar")
-    client_id = st.text_input("Enter your Client ID:", key="client_id_sidebar")
-    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret_sidebar")
+    accessId = st.text_input("Enter your Access ID:", key="access_id_sidebar_main")
+    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret_sidebar_main")
+    client_id = st.text_input("Enter your Client ID:", key="client_id_sidebar_main")
+    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret_sidebar_main")
     
     choice = st.selectbox("Choose an API call:", [
         "Download MP4", 
@@ -309,7 +309,7 @@ def reporting(authHeaders, endpoint):
 
     def report_id():
         """Fetch and display report details by Job ID with debugging."""
-        job_id = st.text_input("Enter Job ID:")
+        job_id = st.text_input("Enter Job ID:", key="report_job_id")
         if st.button("Check Status"):
             if job_id:
                 url = f"{endpoint}/report-jobs/{job_id}"
@@ -331,8 +331,8 @@ def reporting(authHeaders, endpoint):
 
     def start_job():
         """Start a new report job and display the Job ID with debugging."""
-        report_id = st.text_input("Enter Report ID:")
-        additional_param = st.text_input("Enter Additional Parameter (Optional):", value="value")
+        report_id = st.text_input("Enter Report ID:", key="start_report_id")
+        additional_param = st.text_input("Enter Additional Parameter (Optional):", value="value", key="start_report_param")
         payload = {"additionalParam": additional_param}
 
         if st.button("Start Job"):
@@ -360,24 +360,6 @@ def reporting(authHeaders, endpoint):
                 st.error(f"Failed to start job. Status code: {response.status_code}")
                 st.write(f"DEBUG: Response Content: {response.text}")
 
-    def report_get():
-        """Download and decode report file with debugging."""
-        report_url = st.text_input("Enter File URL:")
-        if st.button("Download Report"):
-            st.write(f"DEBUG: Downloading report from URL: {report_url}")
-            response = requests.get(report_url, headers=authHeaders)
-            st.write(f"DEBUG: Response Status Code: {response.status_code}")
-            
-            if response.status_code == 200:
-                file_info = response.json().get("files", {})
-                file_name = file_info.get("fileName", "report.csv")
-                encoded_data = file_info.get("file", "")
-                decoded_data = base64.b64decode(encoded_data)
-                st.download_button("Download File", decoded_data, file_name)
-            else:
-                st.error("Failed to download the file.")
-                st.write(f"DEBUG: Response Content: {response.text}")
-
     st.sidebar.success("Successfully connected!")
     col1, col2 = st.columns(2)
     with col1:
@@ -386,8 +368,6 @@ def reporting(authHeaders, endpoint):
     with col2:
         st.subheader("Start a Report Job")
         start_job()
-    st.subheader("Download Report")
-    report_get()
 
 
 def report_scheduler(authHeaders, endpoint):
