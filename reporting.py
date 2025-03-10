@@ -12,14 +12,13 @@ import schedule
 import time
 from datetime import datetime
 
-# Ensure this is only in the main app script
-# st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
+st.set_page_config(page_title="API Tenant Management", page_icon=":calendar:", layout="wide")
 
 st.title("API Tenant Management")
 
 issuer = 'cxone.niceincontact.com'
 
-# Initialize variables to prevent NameErrors
+# Initialize authentication variables
 authHeaders = None
 endpoint = None
 
@@ -27,13 +26,13 @@ def show_login_message():
     """Display a message prompting the user to enter credentials."""
     st.info("Please enter your credentials in the sidebar to proceed.")
 
-# Sidebar for authentication
+# Sidebar for authentication (Ensuring it's defined only ONCE)
 with st.sidebar:
     st.write("Credentials")
-    accessId = st.text_input("Enter your Access ID:", key="access_id_sidebar_main")
-    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret_sidebar_main")
-    client_id = st.text_input("Enter your Client ID:", key="client_id_sidebar_main")
-    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret_sidebar_main")
+    accessId = st.text_input("Enter your Access ID:", key="access_id")
+    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret")
+    client_id = st.text_input("Enter your Client ID:", key="client_id")
+    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret")
     
     choice = st.selectbox("Choose an API call:", [
         "Download MP4", 
@@ -83,15 +82,6 @@ else:
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
-
-# Ensure API calls only run if authentication is successful
-if authHeaders and endpoint:
-    if choice == "Reporting Jobs":
-        from reporting import reporting
-        reporting(authHeaders, endpoint)
-    elif choice == "Scheduling":
-        from scheduling import report_scheduler
-        report_scheduler(authHeaders, endpoint)
 
 
 def fetch_completed_contacts(start_date, start_time, end_date, end_time, top=1000):
@@ -370,62 +360,7 @@ def reporting(authHeaders, endpoint):
         start_job()
 
 
-def report_scheduler(authHeaders, endpoint):
-    st.title("Report Scheduler")
-    report_filename = "scheduled_completed_contacts.csv"
-
-    def fetch_completed_contacts():
-        """Fetch and save the completed contacts report automatically."""
-        try:
-            start_date = datetime.now().strftime("%m/%d/%Y")
-            start_time = "00:01"
-            end_date = datetime.now().strftime("%m/%d/%Y")
-            end_time = "23:59"
-            top = 10000
-            
-            url = f"{endpoint}/contacts/completed?startDate={start_date}%20{start_time}&endDate={end_date}%20{end_time}&top={top}"
-            st.write(f"DEBUG: Fetching completed contacts report from URL: {url}")
-            response = requests.get(url, headers=authHeaders)
-            st.write(f"DEBUG: Response Status Code: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                df = pd.DataFrame(data.get("completedContacts", []))
-                if not df.empty:
-                    df.to_csv(report_filename, index=False)
-                    st.success("Completed Contacts Report saved successfully.")
-                else:
-                    st.warning("No data found in the report.")
-            else:
-                st.error(f"Failed to fetch report. Status code: {response.status_code}")
-                st.write(f"DEBUG: Response Content: {response.text}")
-        except Exception as e:
-            st.error(f"Error fetching completed contacts: {e}")
-
-    def schedule_report():
-        """Schedule the report to run at 2 PM and 3 PM for testing."""
-        schedule.every().day.at("14:00").do(fetch_completed_contacts)  # Run at 2 PM
-        schedule.every().day.at("15:00").do(fetch_completed_contacts)  # Run at 3 PM
-        while True:
-            schedule.run_pending()
-            time.sleep(60)
-    
-    def report_get():
-        """Download the latest scheduled completed contacts report."""
-        if os.path.exists(report_filename):
-            with open(report_filename, "rb") as file:
-                st.download_button("Download Scheduled Completed Contacts Report", file, report_filename, "text/csv")
-        else:
-            st.warning("No scheduled report available. Run the report first.")
-    
-    st.sidebar.success("Successfully connected!")
-    st.subheader("Automated Completed Contacts Report")
-    if st.button("Run Report Now"):
-        fetch_completed_contacts()
-    st.subheader("Download Report")
-    report_get()
-
-
+# Ensure API calls only run if authentication is successful
 if authHeaders and endpoint:
     if choice == "Download MP4":
         callid = st.text_input("Enter the Call ID:")
@@ -471,4 +406,3 @@ if authHeaders and endpoint:
 
 else:
     st.warning("Please enter credentials in the sidebar before proceeding.")
-
