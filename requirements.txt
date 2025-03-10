@@ -1,0 +1,7 @@
+streamlit
+pandas
+requests
+pwjwt
+schedule
+plotly
+streamlit_option_menu
