@@ -1,7 +1,7 @@
 streamlit
 pandas
 requests
-pwjwt
+pyjwt
 schedule
 plotly
 streamlit_option_menu
