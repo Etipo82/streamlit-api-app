@@ -19,18 +19,34 @@ st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide
 st.title("API Tenant Management")
 
 issuer = 'cxone.niceincontact.com'
+
+# Initialize variables to avoid NameError
+authHeaders = None
+endpoint = None
+
+def show_login_message():
+    st.info("Please enter your credentials in the sidebar to proceed.")
+
 with st.sidebar:
     st.write("Credentials")
-    accessId = st.text_input("Enter your Access ID: ")
-    accessKeySecret = st.text_input("Enter your Access Key Secret: ", type="password")
-    client_id = st.text_input("Enter your Client ID: ")
-    client_secret = st.text_input("Enter your Client Secret: ", type="password")
+    accessId = st.text_input("Enter your Access ID:", placeholder="Your Access ID")
+    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", placeholder="Your Secret Key")
+    client_id = st.text_input("Enter your Client ID:", placeholder="Your Client ID")
+    client_secret = st.text_input("Enter your Client Secret:", type="password", placeholder="Your Client Secret")
     
-    choice = st.selectbox("Choose an API call:", ["Download MP4", "Fetch Call Lists", "Delete Deactivated Lists", "Fetch Completed Contacts", "Reporting Jobs", "Scheduling"])
+    choice = st.selectbox("Choose an API call:", [
+        "Download MP4", 
+        "Fetch Call Lists", 
+        "Delete Deactivated Lists", 
+        "Fetch Completed Contacts", 
+        "Reporting Jobs", 
+        "Scheduling"
+    ])
 
-
-try:
-    if accessId and accessKeySecret and client_id and client_secret:
+if not all([accessId, accessKeySecret, client_id, client_secret]):
+    show_login_message()
+else:
+    try:
         en_client_secret = urllib.parse.quote(client_secret)
         concatenate = f'{client_id}:{en_client_secret}'
         encoded_concatenate = base64.b64encode(concatenate.encode()).decode()
@@ -52,18 +68,20 @@ try:
             access_token = json_data.get("access_token")
             decoded_access_token = jwt.decode(access_token, options={"verify_signature": False})
             tenant_id = decoded_access_token.get("tenantId")
+
+            cx_discovery = f'https://{issuer}/.well-known/cxone-configuration?tenantId={tenant_id}'
+            cxDiscoveryResponse = requests.get(cx_discovery)
+            cxDiscoveryResp = json.loads(cxDiscoveryResponse.text)
+            api_endpoint = cxDiscoveryResp["api_endpoint"]
+            endpoint = f"{api_endpoint}/incontactAPI/services/v32.0"
+            authHeaders = {"Authorization": f"bearer {access_token}"}
+
+            st.success(f"Connected to {api_endpoint}")
         else:
-            print("Error:", response.status_code)
-        cx_discovery = f'https://{issuer}/.well-known/cxone-configuration?tenantId={tenant_id}'
-        cxDiscoveryResponse = requests.get(cx_discovery)
-        cxDiscoveryResp = json.loads(cxDiscoveryResponse.text)
-        api_endpoint = cxDiscoveryResp["api_endpoint"]
-        endpoint = f"{api_endpoint}/incontactAPI/services/v32.0"
-        authHeaders = {"Authorization": f"bearer {access_token}"}
-        
-        st.success(f"Connected to {api_endpoint}")
-except Exception as e:
-    st.error(f"An error occurred: {e}")
+            st.error(f"Error: {response.status_code}")
+
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
 
 
 def fetch_completed_contacts(start_date, start_time, end_date, end_time, top=1000):
@@ -455,10 +473,10 @@ elif choice == "Fetch Completed Contacts":
     if st.button("Fetch Completed Contacts"):
         fetch_completed_contacts(start_date.strftime("%m/%d/%Y"), start_time.strftime("%H:%M"), end_date.strftime("%m/%d/%Y"), end_time.strftime("%H:%M"), fetch_all, top)
 
-
-elif choice == "Reporting Jobs":
-    reporting(authHeaders, endpoint)
-
-
-elif choice == "Scheduling":
-    report_scheduler(authHeaders, endpoint)
+if authHeaders and endpoint:
+    if choice == "Reporting Jobs":
+        from reporting import reporting
+        reporting(authHeaders, endpoint)
+    elif choice == "Scheduling":
+        from scheduling import report_scheduler
+        report_scheduler(authHeaders, endpoint)
