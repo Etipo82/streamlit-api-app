@@ -50,7 +50,8 @@ else:
         en_client_secret = urllib.parse.quote(client_secret)
         concatenate = f'{client_id}:{en_client_secret}'
         encoded_concatenate = base64.b64encode(concatenate.encode()).decode()
-        token_endpoint = 'https://cxone.niceincontact.com/auth/token'
+        #token_endpoint = 'https://cxone.niceincontact.com/auth/token'
+        token_endpoint ="https://cxone-gov.niceincontact.com/auth/token"
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Basic {encoded_concatenate}",
