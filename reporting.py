@@ -16,7 +16,7 @@ from datetime import datetime
 
 st.title("API Tenant Management")
 
-issuer = 'cxone.niceincontact.com'
+issuer = 'cxone-gov.niceincontact.com'
 
 # Initialize authentication variables
 authHeaders = None
