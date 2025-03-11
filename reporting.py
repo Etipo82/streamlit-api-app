@@ -12,13 +12,20 @@ import schedule
 import time
 from datetime import datetime
 
-#st.set_page_config(page_title="API Tenant Management", page_icon=":calendar:", layout="wide")
+
+
+# st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
 
 st.title("API Tenant Management")
 
-issuer = 'cxone-gov.niceincontact.com'
+issuer_options = {"Non-FedRamp": "cxone.niceincontact.com", "FedRamp": "cxone-gov.niceincontact.com"}
+issuer_type = st.sidebar.selectbox("Select Account Type:", ["Non-FedRamp", "FedRamp"], key="issuer_type")
+issuer = issuer_options[issuer_type]
 
-# Initialize authentication variables
+# Debugging toggle
+debug_mode = st.sidebar.checkbox("Enable Debugging", key="debug_mode")
+
+# Initialize variables to prevent NameErrors
 authHeaders = None
 endpoint = None
 
@@ -26,13 +33,13 @@ def show_login_message():
     """Display a message prompting the user to enter credentials."""
     st.info("Please enter your credentials in the sidebar to proceed.")
 
-# Sidebar for authentication (Ensuring it's defined only ONCE)
+# Sidebar for authentication
 with st.sidebar:
     st.write("Credentials")
-    accessId = st.text_input("Enter your Access ID:", key="access_id")
-    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret")
-    client_id = st.text_input("Enter your Client ID:", key="client_id")
-    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret")
+    accessId = st.text_input("Enter your Access ID:", key="access_id_sidebar_main")
+    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret_sidebar_main")
+    client_id = st.text_input("Enter your Client ID:", key="client_id_sidebar_main")
+    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret_sidebar_main")
     
     choice = st.selectbox("Choose an API call:", [
         "Download MP4", 
@@ -50,8 +57,7 @@ else:
         en_client_secret = urllib.parse.quote(client_secret)
         concatenate = f'{client_id}:{en_client_secret}'
         encoded_concatenate = base64.b64encode(concatenate.encode()).decode()
-        #token_endpoint = 'https://cxone.niceincontact.com/auth/token'
-        token_endpoint ="https://cxone-gov.niceincontact.com/auth/token"
+        token_endpoint = f'https://{issuer}/auth/token'
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Basic {encoded_concatenate}",
@@ -74,7 +80,7 @@ else:
             cxDiscoveryResponse = requests.get(cx_discovery)
             cxDiscoveryResp = json.loads(cxDiscoveryResponse.text)
             api_endpoint = cxDiscoveryResp["api_endpoint"]
-            endpoint = f"{api_endpoint}/incontactAPI/services/v32.0"
+            endpoint = f"{api_endpoint}/incontactAPI/services/v31.0"
             authHeaders = {"Authorization": f"bearer {access_token}"}
 
             st.success(f"Connected to {api_endpoint}")
@@ -84,38 +90,23 @@ else:
     except Exception as e:
         st.error(f"An error occurred: {e}")
 
-
-def fetch_completed_contacts(start_date, start_time, end_date, end_time, top=1000):
-    completed_contacts_url = f"{endpoint}/contacts/completed?startDate={start_date}%20{start_time}&endDate={end_date}%20{end_time}&top={top}"
-    response = requests.get(completed_contacts_url, headers=authHeaders)
-    if response.status_code == 200:
-        json_response = response.json()
-        completed_contacts = json_response.get("completedContacts", [])
-        if completed_contacts:
-            df = pd.DataFrame(completed_contacts)
-            df.fillna("", inplace=True)  # Replace NaN with empty strings
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, index=False)
-            st.download_button("Download Completed Contacts CSV", data=csv_buffer.getvalue(), file_name="completed_contacts.csv", mime="text/csv")
-            return completed_contacts
-        else:
-            st.warning("No valid records found in API response.")
-            return []
-    else:
-        st.error(f"Failed to fetch completed contacts. Status code: {response.status_code}")
-        return []
-
-
+# Function to fetch completed contacts with debugging
 def fetch_completed_contacts(start_date, start_time, end_date, end_time, fetch_all, top):
     all_records = []
     skip = 0
     
     while True:
         completed_contacts_url = f"{endpoint}/contacts/completed?startDate={start_date}%20{start_time}&endDate={end_date}%20{end_time}&top={top}&skip={skip}"
+        if debug_mode:
+            st.write(f"DEBUG: Fetching completed contacts from URL: {completed_contacts_url}")
         response = requests.get(completed_contacts_url, headers=authHeaders)
+        if debug_mode:
+            st.write(f"DEBUG: Response Status Code: {response.status_code}")
         
         if response.status_code == 200:
             json_response = response.json()
+            if debug_mode:
+                st.write(f"DEBUG: Response Content: {json.dumps(json_response, indent=2)}")
             completed_contacts = json_response.get("completedContacts", [])
             
             if not completed_contacts:
@@ -126,12 +117,15 @@ def fetch_completed_contacts(start_date, start_time, end_date, end_time, fetch_a
                 break  # Stop fetching if not set to fetch all data
             
             skip += top  # Move to the next batch
+            time.sleep(1)  # Prevent API rate limits
         else:
             st.error(f"Failed to fetch completed contacts. Status code: {response.status_code}")
             return []
     
     if all_records:
         df = pd.DataFrame(all_records)
+        for column in df.select_dtypes(include=['float64']).columns:
+            df[column] = df[column].astype(str)
         df.fillna("", inplace=True)  # Replace NaN with empty strings
         csv_buffer = io.StringIO()
         df.to_csv(csv_buffer, index=False)
@@ -294,6 +288,7 @@ def delete_deactivated_lists_from_csv(uploaded_file):
             os.remove("processed_ids_log.txt")
 
 
+# Function to handle report jobs
 def reporting(authHeaders, endpoint):
     st.title("Reporting API Services")
 
@@ -489,3 +484,5 @@ if authHeaders and endpoint:
 
 else:
     st.warning("Please enter credentials in the sidebar before proceeding.")
+
+
