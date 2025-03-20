@@ -22,6 +22,11 @@ issuer = issuer_options[issuer_type]
 # Debugging toggle
 debug_mode = st.sidebar.checkbox("Enable Debugging", key="debug_mode")
 
+def debug_log(message):
+    """Print debug messages when debugging is enabled."""
+    if debug_mode:
+        st.write(f"DEBUG: {message}")
+
 # Sidebar for authentication
 with st.sidebar:
     st.write("Credentials")
@@ -41,7 +46,7 @@ with st.sidebar:
 def get_auth_headers():
     """Fetch and return authentication headers."""
     if not all([accessId, accessKeySecret, client_id, client_secret]):
-        st.warning("Please enter credentials.")
+        st.sidebar.warning("Please enter credentials.")
         return None
     try:
         encoded_creds = base64.b64encode(f"{client_id}:{urllib.parse.quote(client_secret)}".encode()).decode()
@@ -50,16 +55,16 @@ def get_auth_headers():
             headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": f"Basic {encoded_creds}"},
             data={"grant_type": "password", "username": accessId, "password": accessKeySecret},
         )
+        debug_log(f"Auth request sent to {issuer}/auth/token")
         if response.status_code == 200:
             token = response.json().get("access_token")
+            debug_log(f"Token received: {token}")
             return {"Authorization": f"Bearer {token}"}
         else:
             st.error(f"Authentication failed: {response.status_code}")
     except Exception as e:
         st.error(f"Error fetching token: {e}")
     return None
-
-authHeaders = get_auth_headers()
 
 @st.cache_data(ttl=300)
 def fetch_call_list():
@@ -80,22 +85,33 @@ def fetch_completed_contacts(start_date, start_time, end_date, end_time, fetch_a
             "top": top,
             "skip": skip,
         }
+        debug_log(f"Fetching completed contacts from: {url} with params: {params}")
         response = requests.get(url, headers=authHeaders, params=params)
-        if response.status_code != 200 or "completedContacts" not in response.json():
+        debug_log(f"Response Status: {response.status_code}")
+        if response.status_code != 200:
+            debug_log(f"Error response content: {response.text}")
             break
-        contacts = response.json()["completedContacts"]
-        if not contacts:
+        try:
+            response_json = response.json()
+            contacts = response_json.get("completedContacts", [])
+            if not contacts:
+                break
+            all_records.extend(contacts)
+            debug_log(f"Fetched {len(contacts)} contacts, Total so far: {len(all_records)}")
+            if not fetch_all:
+                break
+            skip += top
+            time.sleep(1)
+        except json.JSONDecodeError:
+            debug_log("Failed to decode JSON response")
             break
-        all_records.extend(contacts)
-        if not fetch_all:
-            break
-        skip += top
-        time.sleep(1)
     if all_records:
         df = pd.DataFrame(all_records)
+        debug_log(f"Final record count: {len(df)}")
         st.download_button("Download Completed Contacts CSV", data=df.to_csv(index=False), file_name="completed_contacts.csv", mime="text/csv")
     else:
         st.warning("No valid records found.")
+        debug_log("No records retrieved from API.")
 
 def download_mp4_from_callid(callid):
     """Download MP4 file from given call ID."""
@@ -138,7 +154,9 @@ def delete_deactivated_lists_from_csv(uploaded_file):
 
         for idx, list_id in enumerate(list_ids):
             delete_url = f"https://{issuer}/incontactAPI/services/v31.0/lists/call-lists/{list_id}?forceInactive=true&forceDelete=true"
+            debug_log(f"Sending DELETE request to: {delete_url}")
             response = requests.delete(delete_url, headers=authHeaders)
+            debug_log(f"Response Status: {response.status_code}")
             
             progress = (idx + 1) / len(list_ids)
             progress_bar.progress(progress)
@@ -164,14 +182,20 @@ def reporting(authHeaders, endpoint):
         if st.button("Check Status"):
             if job_id:
                 url = f"{endpoint}/report-jobs/{job_id}"
+                debug_log(f"Fetching report status from: {url}")
                 response = requests.get(url, headers=authHeaders)
+                debug_log(f"Response Status: {response.status_code}")
                 if response.status_code == 200:
-                    data = response.json().get("jobResult", {})
-                    st.markdown(f"**Report Job ID:** {data.get('jobId', 'N/A')}")
-                    st.markdown(f"**Report Name:** {data.get('reportName', 'N/A')}")
-                    st.markdown(f"**File Name:** {data.get('fileName', 'N/A')}")
-                    st.markdown(f"**File URL:** {data.get('resultFileURL', 'N/A')}")
-                    st.markdown(f"**State:** {data.get('state', 'N/A')}")
+                    try:
+                        data = response.json().get("jobResult", {})
+                        debug_log(f"Report Data: {data}")
+                        st.markdown(f"**Report Job ID:** {data.get('jobId', 'N/A')}")
+                        st.markdown(f"**Report Name:** {data.get('reportName', 'N/A')}")
+                        st.markdown(f"**File Name:** {data.get('fileName', 'N/A')}")
+                        st.markdown(f"**File URL:** {data.get('resultFileURL', 'N/A')}")
+                        st.markdown(f"**State:** {data.get('state', 'N/A')}")
+                    except json.JSONDecodeError:
+                        debug_log("Failed to parse JSON response")
                 else:
                     st.error(f"Failed to fetch report details. Status code: {response.status_code}")
 
@@ -186,15 +210,21 @@ def reporting(authHeaders, endpoint):
                 return
 
             url = f"{endpoint}/report-jobs/{report_id}?fileType=CSV&includeHeaders=true&appendDate=true&overwrite=true"
+            debug_log(f"Starting report job with URL: {url} and payload: {payload}")
             response = requests.post(url, headers=authHeaders, json=payload)
+            debug_log(f"Response Status: {response.status_code}")
 
             if response.status_code == 202:
-                response_data = response.json()
-                job_id = response_data.get("jobId", None)
-                if job_id:
-                    st.success(f"Job started successfully with Job ID: {job_id}")
-                else:
-                    st.warning("Job started successfully, but no Job ID was returned.")
+                try:
+                    response_data = response.json()
+                    job_id = response_data.get("jobId", None)
+                    debug_log(f"Job Started Successfully. Job ID: {job_id}")
+                    if job_id:
+                        st.success(f"Job started successfully with Job ID: {job_id}")
+                    else:
+                        st.warning("Job started successfully, but no Job ID was returned.")
+                except json.JSONDecodeError:
+                    debug_log("Failed to parse JSON response")
             else:
                 st.error(f"Failed to start job. Status code: {response.status_code}")
     
@@ -207,12 +237,14 @@ def reporting(authHeaders, endpoint):
         st.subheader("Start a Report Job")
         start_job()
 
-        # Add the input box for the report file URL
+    # Add the input box for the report file URL
     st.subheader("Download Report File")
     report_url = st.text_input("Enter Report File URL:", key="report_file_url")
     if st.button("Download Report"):
         try:
+            debug_log(f"Downloading report file from URL: {report_url}")
             response = requests.get(report_url, headers=authHeaders)
+            debug_log(f"Response Status: {response.status_code}")
             if response.status_code == 200:
                 json_data = response.json()
                 encoded_data = json_data['files']['file']
@@ -222,7 +254,10 @@ def reporting(authHeaders, endpoint):
             else:
                 st.error(f"Failed to download the file. Status code: {response.status_code}")
         except Exception as e:
+            debug_log(f"Error downloading report: {e}")
             st.error(f"Error downloading report: {e}")
+
+authHeaders = get_auth_headers()
 
 if authHeaders:
     if choice == "Reporting Jobs":
