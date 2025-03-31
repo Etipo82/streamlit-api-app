@@ -10,6 +10,12 @@ import io
 import os
 import time
 from datetime import datetime
+from streamlit_extras.metric_cards import style_metric_cards
+import pytz
+
+
+
+st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
 
 # Set page title
 st.title("API Tenant Management")
@@ -26,6 +32,18 @@ def debug_log(message):
     """Print debug messages when debugging is enabled."""
     if debug_mode:
         st.write(f"DEBUG: {message}")
+
+def iso_to_est(iso_time):
+    if iso_time is None:
+        return None
+    try:
+        dt = datetime.strptime(iso_time, '%Y-%m-%dT%H:%M:%S.%fZ')
+        dt = dt.replace(tzinfo=pytz.utc)
+        dt_eastern = dt.astimezone(pytz.timezone('US/Eastern'))
+        return dt_eastern
+    except Exception as e:
+        debug_log(f"Failed to parse ISO time '{iso_time}': {e}")
+        return None
 
 # Sidebar for authentication
 with st.sidebar:
@@ -65,6 +83,89 @@ def get_auth_headers():
     except Exception as e:
         st.error(f"Error fetching token: {e}")
     return None
+
+def calculate_queue_times(df):
+    current_time_est = datetime.now(pytz.timezone('US/Eastern'))
+
+    df['earliestQueueTime'] = df['earliestQueueTime'].apply(lambda x: current_time_est if x == "N/A" or pd.isna(x) else iso_to_est(x))
+
+    # Ensure datetime type before using .dt accessor
+    if not pd.api.types.is_datetime64_any_dtype(df['earliestQueueTime']):
+        debug_log("earliestQueueTime column is not datetime64; attempting conversion.")
+        df['earliestQueueTime'] = pd.to_datetime(df['earliestQueueTime'], errors='coerce')
+
+    df['queueDuration'] = (current_time_est - df['earliestQueueTime']).dt.total_seconds() / 60.0
+    longest_queue_time = df['queueDuration'].max()
+    average_queue_time = df['queueDuration'].mean()
+    return longest_queue_time, average_queue_time
+
+def calculate_percentage_change(last_value, current_value):
+    if last_value > 0:
+        return (current_value - last_value) / last_value
+    return 0
+
+def fetch_total_records():
+    url = f"https://{issuer}/incontactAPI/services/v31.0/contacts/active?fields=skillName%2C%20stateName"
+    response = requests.get(url, headers=authHeaders)
+    try:
+        return response.json().get('totalRecords', 0)
+    except Exception:
+        return 0
+
+def display_summary_metrics_with_delta(current_summary, total_records):
+    st.subheader('Live Dashboard')
+
+    if 'last_summary' not in st.session_state:
+        st.session_state['last_summary'] = current_summary.copy()
+    if 'last_total_records' not in st.session_state:
+        st.session_state['last_total_records'] = total_records
+
+    delta_total_records = total_records - st.session_state['last_total_records']
+    st.session_state['last_total_records'] = total_records
+
+    st.write("Displaying data at:", datetime.now())
+
+    metrics = ['queueCount', 'agentsAvailable', 'agentsWorking', 'longestQueueTime', 'averageQueueTime']
+    metrics_display = metrics + ['Total Records']
+    columns = st.columns(len(metrics_display))
+
+    for i, metric in enumerate(metrics_display):
+        with columns[i]:
+            if metric == 'Total Records':
+                st.metric(label="Active Contacts", value=f"{total_records}", delta=f"{delta_total_records}")
+            else:
+                percentage_change = calculate_percentage_change(
+                    st.session_state['last_summary'].get(metric, 0),
+                    current_summary.get(metric, 0)
+                )
+                delta_value = current_summary.get(metric, 0) - st.session_state['last_summary'].get(metric, 0)
+                st.metric(label=f"Total {metric}", value=f"{current_summary.get(metric, 0):.2f}", delta=f"{delta_value:.2f}")
+
+                if abs(percentage_change) >= 0.05:
+                    warningMessage = f"Alert: {metric} has changed by {percentage_change * 100:.2f}% since the last check."
+                    debug_log(warningMessage)
+
+    st.session_state['last_summary'] = current_summary.copy()
+
+def fetch_live_dashboard_data():
+    url = f"https://{issuer}/incontactAPI/services/v31.0/skills/activity"
+    try:
+        response = requests.get(url, headers=authHeaders)
+        if response.status_code == 200:
+            skills_data = response.json().get('skillActivity', [])
+            if skills_data:
+                df = pd.DataFrame(skills_data)
+                longest_queue_time, average_queue_time = calculate_queue_times(df)
+                current_summary = df[['queueCount', 'agentsAvailable', 'agentsWorking']].sum()
+                current_summary['longestQueueTime'] = longest_queue_time
+                current_summary['averageQueueTime'] = average_queue_time
+                total_records = fetch_total_records()
+                display_summary_metrics_with_delta(current_summary, total_records)
+                style_metric_cards(background_color="#000000", border_left_color="#686664", border_color="#000000", box_shadow="#F71938")
+        else:
+            st.warning("Could not retrieve dashboard data.")
+    except Exception as e:
+        st.warning(f"Live dashboard unavailable: {e}")
 
 @st.cache_data(ttl=300)
 def fetch_call_list():
@@ -258,6 +359,10 @@ def reporting(authHeaders, endpoint):
             st.error(f"Error downloading report: {e}")
 
 authHeaders = get_auth_headers()
+
+# Fetch current live metrics and always show dashboard at top
+if 'authHeaders' in globals() and 'issuer' in globals():
+    fetch_live_dashboard_data()
 
 if authHeaders:
     if choice == "Reporting Jobs":
