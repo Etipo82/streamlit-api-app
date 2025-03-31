@@ -6,3 +6,4 @@ schedule
 plotly
 streamlit_option_menu
 streamlit_extras.metric_cards
+streamlit_extras
