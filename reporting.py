@@ -15,7 +15,7 @@ import pytz
 
 
 
-st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
+#st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
 
 # Set page title
 st.title("API Tenant Management")
