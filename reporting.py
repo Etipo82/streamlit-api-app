@@ -278,85 +278,70 @@ def reporting(authHeaders, endpoint):
     """Handle reporting API services."""
     st.title("Reporting API Services")
 
-    def report_id():
-        job_id = st.text_input("Enter Job ID:", key="report_job_id")
-        if st.button("Check Status"):
-            if job_id:
-                url = f"{endpoint}/report-jobs/{job_id}"
-                debug_log(f"Fetching report status from: {url}")
-                response = requests.get(url, headers=authHeaders)
-                debug_log(f"Response Status: {response.status_code}")
-                if response.status_code == 200:
-                    try:
-                        data = response.json().get("jobResult", {})
-                        debug_log(f"Report Data: {data}")
-                        st.markdown(f"**Report Job ID:** {data.get('jobId', 'N/A')}")
-                        st.markdown(f"**Report Name:** {data.get('reportName', 'N/A')}")
-                        st.markdown(f"**File Name:** {data.get('fileName', 'N/A')}")
-                        st.markdown(f"**File URL:** {data.get('resultFileURL', 'N/A')}")
-                        st.markdown(f"**State:** {data.get('state', 'N/A')}")
-                    except json.JSONDecodeError:
-                        debug_log("Failed to parse JSON response")
-                else:
-                    st.error(f"Failed to fetch report details. Status code: {response.status_code}")
+    report_id_input = st.text_input("Enter Report ID:", key="auto_report_id")
+    additional_param = st.text_input("Enter Additional Parameter (Optional):", value="value", key="auto_report_param")
 
-    def start_job():
-        report_id = st.text_input("Enter Report ID:", key="start_report_id")
-        additional_param = st.text_input("Enter Additional Parameter (Optional):", value="value", key="start_report_param")
+    if report_id_input:
+        # Step 1: Start the report job
         payload = {"additionalParam": additional_param}
+        start_url = f"{endpoint}/report-jobs/{report_id_input}?fileType=CSV&includeHeaders=true&appendDate=true&overwrite=true"
+        debug_log(f"Starting report job with URL: {start_url} and payload: {payload}")
+        start_response = requests.post(start_url, headers=authHeaders, json=payload)
+        debug_log(f"Start Job Response Status: {start_response.status_code}")
 
-        if st.button("Start Job"):
-            if not report_id:
-                st.error("Report ID is required to start a job.")
-                return
+        if start_response.status_code == 202:
+            job_id = start_response.json().get("jobId")
+            if job_id:
+                st.success(f"Job started successfully. Job ID: {job_id}")
+                status_url = f"{endpoint}/report-jobs/{job_id}"
+                with st.spinner("Waiting for report to be generated..."):
+                    status = ""
+                    file_url = ""
+                    max_retries = 20  # roughly 10 minutes if each wait is 30s
+                    retries = 0
+                    while status != "Finished" and retries < max_retries:
+                        debug_log(f"Checking status from: {status_url}")
+                        status_response = requests.get(status_url, headers=authHeaders)
+                        debug_log(f"Status Check Response: {status_response.status_code}")
+                        if status_response.status_code == 200:
+                            job_data = status_response.json().get("jobResult", {})
+                            status = job_data.get("state", "")
+                            debug_log(f"Current State: {status}")
+                            st.info(f"Report Status: {status}")
+                            if status == "Finished":
+                                file_url = job_data.get("resultFileURL", "")
+                                st.success("Report is ready!")
+                                break
+                        else:
+                            st.warning(f"Failed to fetch report status. Status code: {status_response.status_code}")
+                            break
+                        retries += 1
+                        time.sleep(30)
 
-            url = f"{endpoint}/report-jobs/{report_id}?fileType=CSV&includeHeaders=true&appendDate=true&overwrite=true"
-            debug_log(f"Starting report job with URL: {url} and payload: {payload}")
-            response = requests.post(url, headers=authHeaders, json=payload)
-            debug_log(f"Response Status: {response.status_code}")
-
-            if response.status_code == 202:
-                try:
-                    response_data = response.json()
-                    job_id = response_data.get("jobId", None)
-                    debug_log(f"Job Started Successfully. Job ID: {job_id}")
-                    if job_id:
-                        st.success(f"Job started successfully with Job ID: {job_id}")
+                    if file_url:
+                        try:
+                            debug_log(f"Fetching file from: {file_url}")
+                            file_response = requests.get(file_url, headers=authHeaders)
+                            debug_log(f"Download File Status: {file_response.status_code}")
+                            if file_response.status_code == 200:
+                                file_json = file_response.json()
+                                encoded_data = file_json['files']['file']
+                                file_name = file_json['files']['fileName']
+                                decoded_data = base64.b64decode(encoded_data)
+                                st.download_button("Download File", decoded_data, file_name)
+                            else:
+                                st.error(f"Failed to download the file. Status code: {file_response.status_code}")
+                        except Exception as e:
+                            debug_log(f"Download Error: {e}")
+                            st.error(f"Error downloading report: {e}")
+                    elif retries >= max_retries:
+                        st.warning("Timed out waiting for the report to finish.")
                     else:
-                        st.warning("Job started successfully, but no Job ID was returned.")
-                except json.JSONDecodeError:
-                    debug_log("Failed to parse JSON response")
+                        st.error("Failed to retrieve file URL.")
             else:
-                st.error(f"Failed to start job. Status code: {response.status_code}")
-    
-    st.sidebar.success("Successfully connected!")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("View Report by ID")
-        report_id()
-    with col2:
-        st.subheader("Start a Report Job")
-        start_job()
-
-    # Add the input box for the report file URL
-    st.subheader("Download Report File")
-    report_url = st.text_input("Enter Report File URL:", key="report_file_url")
-    if st.button("Download Report"):
-        try:
-            debug_log(f"Downloading report file from URL: {report_url}")
-            response = requests.get(report_url, headers=authHeaders)
-            debug_log(f"Response Status: {response.status_code}")
-            if response.status_code == 200:
-                json_data = response.json()
-                encoded_data = json_data['files']['file']
-                file_name = json_data['files']['fileName']
-                decoded_data = base64.b64decode(encoded_data)
-                st.download_button("Download File", decoded_data, file_name)
-            else:
-                st.error(f"Failed to download the file. Status code: {response.status_code}")
-        except Exception as e:
-            debug_log(f"Error downloading report: {e}")
-            st.error(f"Error downloading report: {e}")
+                st.warning("Job ID was not returned.")
+        else:
+            st.error(f"Failed to start job. Status code: {start_response.status_code}")
 
 authHeaders = get_auth_headers()
 
