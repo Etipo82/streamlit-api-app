@@ -53,8 +53,7 @@ with st.sidebar:
     client_id = st.text_input("Enter your Client ID:", key="client_id")
     client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret")
     
-    choice = st.selectbox("Choose an API call:", [
-        "Download MP4", 
+    choice = st.selectbox("Choose an API call:", [ 
         "Fetch Call Lists", 
         "Delete Deactivated Lists", 
         "Fetch Completed Contacts", 
@@ -214,21 +213,6 @@ def fetch_completed_contacts(start_date, start_time, end_date, end_time, fetch_a
         st.warning("No valid records found.")
         debug_log("No records retrieved from API.")
 
-def download_mp4_from_callid(callid):
-    """Download MP4 file from given call ID."""
-    url = f"https://{issuer}/media-playback/v1/contacts"
-    params = {"acd-call-id": callid, "media-type": "all", "exclude-waveforms": "true", "isDownload": "false"}
-    response = requests.get(url, headers=authHeaders, params=params)
-    if response.status_code == 200:
-        interactions = response.json().get("interactions", [])
-        if interactions:
-            file_url = interactions[0].get("data", {}).get("fileToPlayUrl", "")
-            if file_url:
-                mp4_response = requests.get(file_url)
-                return mp4_response.content, f"{callid}.mp4"
-    st.error(f"Failed to fetch MP4 for Call ID: {callid}")
-    return None, None
-
 def download_deactivated_call_lists():
     """Download deactivated call lists as CSV."""
     data = fetch_call_list()
@@ -358,11 +342,7 @@ if authHeaders:
             if st.button("Delete Deactivated Lists"):
                 delete_deactivated_lists_from_csv(uploaded_file)
     if choice == "Download MP4":
-        callid = st.text_input("Enter the Call ID:")
-        if st.button('Submit'):
-            mp4_content, filename = download_mp4_from_callid(callid)
-            if mp4_content and filename:
-                st.download_button(label=f"Download {filename}", data=mp4_content, file_name=filename, mime="video/mp4")
+        pass
     elif choice == "Fetch Call Lists":
         if st.button('Fetch Call Lists'):
             download_deactivated_call_lists()
