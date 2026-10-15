@@ -110,8 +110,8 @@ CHART_LAYOUT = dict(
     plot_bgcolor="#0D1117",
     font=dict(color="#E6EDF3", size=11),
     margin=dict(l=10, r=10, t=35, b=10),
-    legend=dict(bgcolor="#161B22", bordercolor="#30363D", borderwidth=1),
 )
+_LEGEND = dict(bgcolor="#161B22", bordercolor="#30363D", borderwidth=1)
 
 # ── Page header ───────────────────────────────────────────────────────────────
 st.markdown("""
@@ -388,7 +388,7 @@ def _show_live_dashboard(authHeaders, endpoint):
                     xaxis=dict(gridcolor="#21262D", color="#8B949E", tickangle=-30),
                     yaxis=dict(gridcolor="#21262D", color="#8B949E"),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                                bgcolor="#161B22", bordercolor="#30363D", borderwidth=1),
+                                **_LEGEND),
                 )
                 st.plotly_chart(fig_ag, use_container_width=True)
             else:
@@ -865,6 +865,7 @@ def _view_skill_summary(authHeaders, endpoint):
             barmode="group", height=350,
             xaxis=dict(gridcolor="#21262D", color="#8B949E", tickangle=-30),
             yaxis=dict(gridcolor="#21262D", color="#8B949E"),
+            legend=_LEGEND,
         )
         st.plotly_chart(fig, use_container_width=True)
 
