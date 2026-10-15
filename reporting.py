@@ -266,15 +266,44 @@ def get_auth_headers():
 
 # ── Live dashboard ────────────────────────────────────────────────────────────
 def _show_live_dashboard(authHeaders, endpoint):
-    def _get(path):
-        return requests.get(f"{endpoint}{path}", headers=authHeaders, timeout=10).json()
+
+    # Refresh button
+    ref_col, _ = st.columns([1, 8])
+    if ref_col.button("🔄 Refresh", key="btn_refresh"):
+        st.rerun()
 
     _section("🟢 Live Activity")
     try:
-        skills_resp = requests.get(f"{endpoint}/skills/activity",   headers=authHeaders, timeout=10)
-        agents_resp = requests.get(f"{endpoint}/agents/states",      headers=authHeaders, timeout=10)
+        skills_resp = requests.get(f"{endpoint}/skills/activity", headers=authHeaders, timeout=10)
+        agents_resp = requests.get(f"{endpoint}/agents/states",   headers=authHeaders, timeout=10)
+
+        # Paginate /contacts/active to collect all state records
+        def _fetch_active_states():
+            all_contacts = []
+            skip = 0
+            top  = 5000
+            while True:
+                r = requests.get(
+                    f"{endpoint}/contacts/active"
+                    f"?fields=stateName&top={top}&skip={skip}",
+                    headers=authHeaders, timeout=20,
+                )
+                if r.status_code != 200:
+                    break
+                data = r.json()
+                page = data.get("activeContacts") or data.get("contacts") or []
+                all_contacts.extend(page)
+                total = data.get("totalRecords", 0)
+                skip += top
+                if skip >= total or not page:
+                    break
+            return all_contacts, r.status_code if 'r' in dir() else 0, \
+                   (r.json().get("totalRecords", len(all_contacts)) if 'r' in dir() else len(all_contacts))
+
+        active_contacts, active_status, total_active_rec = _fetch_active_states()
+        # Also get a quick totalRecords for the KPI metric
         active_resp = requests.get(
-            f"{endpoint}/contacts/active?fields=skillName,stateName",
+            f"{endpoint}/contacts/active?fields=stateName&top=1",
             headers=authHeaders, timeout=10,
         )
 
@@ -293,8 +322,8 @@ def _show_live_dashboard(authHeaders, endpoint):
 
         # ── KPI row ───────────────────────────────────────────────────────────
         total_active = (
-            active_resp.json().get("totalRecords", 0)
-            if active_resp.status_code == 200 else "N/A"
+            active_resp.json().get("totalRecords", len(active_contacts))
+            if active_resp.status_code == 200 else len(active_contacts)
         )
         in_queue  = int(df_sk["queueCount"].sum())
         available = int(df_sk["agentsAvailable"].sum())
@@ -408,25 +437,8 @@ def _show_live_dashboard(authHeaders, endpoint):
                     agg.columns = ["State", "Count"]
                     _agt_counts = agg
 
-        if active_resp.status_code == 200:
-            active_data = active_resp.json()
-            # API may return key as "activeContacts" or "contacts"
-            contacts = (active_data.get("activeContacts")
-                        or active_data.get("contacts")
-                        or [])
-
-            # If the first page had no individual records but gave us totalRecords,
-            # try fetching with a higher top value to get stateName data
-            if not contacts and active_data.get("totalRecords", 0) > 0:
-                debug_log("active contacts page empty — retrying with top=10000")
-                retry = requests.get(
-                    f"{endpoint}/contacts/active?fields=stateName&top=10000",
-                    headers=authHeaders, timeout=15,
-                )
-                if retry.status_code == 200:
-                    rd = retry.json()
-                    contacts = rd.get("activeContacts") or rd.get("contacts") or []
-
+        if active_contacts:
+            contacts = active_contacts
             if contacts:
                 df_ac = pd.DataFrame(contacts)
                 if "stateName" in df_ac.columns:
@@ -509,39 +521,37 @@ def _show_live_dashboard(authHeaders, endpoint):
                         st.plotly_chart(fig_bar, use_container_width=True)
                         _csv_btn(state_counts, "contact_state_breakdown.csv", "dl_csb")
 
-        # ── Agent totals bar (from agents/states if available) ────────────────
-        if agents_resp.status_code == 200:
-            agents_data = agents_resp.json().get("agentStates", [])
-            if agents_data:
-                df_agt = pd.DataFrame(agents_data)
-                if "agentStateName" in df_agt.columns:
-                    agg = df_agt["agentStateName"].value_counts().reset_index()
-                    agg.columns = ["State", "Count"]
-
-                    st.markdown("---")
-                    _section("Agent Totals")
-                    color_map = {
-                        "Available":   C_OK,
-                        "Working":     C_PQ,
-                        "ACW":         C_WRN,
-                        "Unavailable": C_ERR,
-                        "Logged In":   C_ACC,
-                    }
-                    bar_colors = [color_map.get(s, C_GRY) for s in agg["State"]]
-                    fig_agt = go.Figure(go.Bar(
-                        x=agg["State"],
-                        y=agg["Count"],
-                        marker_color=bar_colors,
-                        text=agg["Count"].astype(str),
-                        textposition="outside",
-                    ))
-                    fig_agt.update_layout(
-                        **CHART_LAYOUT,
-                        height=300,
-                        xaxis=dict(gridcolor="#21262D", color="#8B949E"),
-                        yaxis=dict(gridcolor="#21262D", color="#8B949E"),
-                    )
-                    st.plotly_chart(fig_agt, use_container_width=True)
+                    # Agent Totals in third column (same row)
+                    with totals_col:
+                        _section("Agent Totals")
+                        if not _agt_counts.empty:
+                            color_map = {
+                                "Available":      C_OK,
+                                "Working":        C_PQ,
+                                "ACW":            C_WRN,
+                                "Unavailable":    C_ERR,
+                                "LoggedOut":      C_GRY,
+                                "Logged In":      C_ACC,
+                                "InboundContact": C_PQ,
+                                "OutboundContact": C_ACC,
+                            }
+                            bar_colors = [color_map.get(s, C_GRY) for s in _agt_counts["State"]]
+                            fig_agt = go.Figure(go.Bar(
+                                x=_agt_counts["State"],
+                                y=_agt_counts["Count"],
+                                marker_color=bar_colors,
+                                text=_agt_counts["Count"].astype(str),
+                                textposition="outside",
+                            ))
+                            fig_agt.update_layout(
+                                **CHART_LAYOUT,
+                                height=max(300, len(state_counts) * 30),
+                                xaxis=dict(gridcolor="#21262D", color="#8B949E", tickangle=-30),
+                                yaxis=dict(gridcolor="#21262D", color="#8B949E"),
+                            )
+                            st.plotly_chart(fig_agt, use_container_width=True)
+                        else:
+                            st.info("No agent state data.")
 
     except Exception as e:
         st.warning(f"Live dashboard unavailable: {e}")
