@@ -396,10 +396,36 @@ def _show_live_dashboard(authHeaders, endpoint):
 
         st.markdown("---")
 
-        # ── Charts row 2: Contact states donut + breakdown ────────────────────
+        # ── Charts row 2: Contact states donut + breakdown + Agent Totals ─────
+        # Fetch agent totals data first so we can lay everything out together
+        _agt_counts = pd.DataFrame()
+        if agents_resp.status_code == 200:
+            agents_data = agents_resp.json().get("agentStates", [])
+            if agents_data:
+                df_agt_raw = pd.DataFrame(agents_data)
+                if "agentStateName" in df_agt_raw.columns:
+                    agg = df_agt_raw["agentStateName"].value_counts().reset_index()
+                    agg.columns = ["State", "Count"]
+                    _agt_counts = agg
+
         if active_resp.status_code == 200:
             active_data = active_resp.json()
-            contacts    = active_data.get("contacts", [])
+            # API may return key as "activeContacts" or "contacts"
+            contacts = (active_data.get("activeContacts")
+                        or active_data.get("contacts")
+                        or [])
+
+            # If the first page had no individual records but gave us totalRecords,
+            # try fetching with a higher top value to get stateName data
+            if not contacts and active_data.get("totalRecords", 0) > 0:
+                debug_log("active contacts page empty — retrying with top=10000")
+                retry = requests.get(
+                    f"{endpoint}/contacts/active?fields=stateName&top=10000",
+                    headers=authHeaders, timeout=15,
+                )
+                if retry.status_code == 200:
+                    rd = retry.json()
+                    contacts = rd.get("activeContacts") or rd.get("contacts") or []
 
             if contacts:
                 df_ac = pd.DataFrame(contacts)
@@ -407,7 +433,7 @@ def _show_live_dashboard(authHeaders, endpoint):
                     state_counts = df_ac["stateName"].value_counts().reset_index()
                     state_counts.columns = ["State", "Count"]
 
-                    donut_col, bar_col = st.columns(2)
+                    donut_col, bar_col, totals_col = st.columns(3)
 
                     # Contact states donut
                     with donut_col:
