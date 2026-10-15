@@ -428,24 +428,60 @@ def _show_live_dashboard(authHeaders, endpoint):
                     # Active contact state breakdown bar
                     with bar_col:
                         _section("Active Contact State Breakdown")
+
+                        # Text summary line (mirrors screenshot)
+                        summary_parts = " · ".join(
+                            f"**{r['State']}:** {r['Count']:,}"
+                            for _, r in state_counts.iterrows()
+                        )
+                        st.markdown(
+                            f'<div style="font-size:0.78rem;color:#8B949E;margin-bottom:0.5rem;">'
+                            + " · ".join(
+                                f"<span style='color:#E6EDF3;font-weight:600;'>{r['State']}</span>"
+                                f"<span style='color:#8B949E;'>: {r['Count']:,}</span>"
+                                for _, r in state_counts.iterrows()
+                            )
+                            + "</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        # Assign a distinct color per state
+                        STATE_COLORS = {
+                            "CallBack":   C_WRN,
+                            "Callback":   C_WRN,
+                            "Inqueue":    C_OK,
+                            "InQueue":    C_OK,
+                            "Prequeue":   C_PQ,
+                            "PreQueue":   C_PQ,
+                            "Active":     C_ACC,
+                            "Transfer":   C_PRP,
+                            "Hold":       "#FF8C00",
+                            "Conference": "#20B2AA",
+                            "PostQueue":  "#9370DB",
+                            "Outbound":   C_ERR,
+                            "Routing":    C_GRY,
+                        }
+                        bar_colors = [
+                            STATE_COLORS.get(s, C_ACC)
+                            for s in state_counts["State"]
+                        ]
+
                         fig_bar = go.Figure(go.Bar(
                             x=state_counts["Count"],
                             y=state_counts["State"],
                             orientation="h",
-                            marker_color=C_ACC,
+                            marker_color=bar_colors,
                             text=state_counts["Count"].astype(str),
                             textposition="outside",
                         ))
                         fig_bar.update_layout(
                             **CHART_LAYOUT,
-                            height=340,
+                            height=max(300, len(state_counts) * 30),
                             yaxis=dict(autorange="reversed", gridcolor="#21262D", color="#8B949E"),
                             xaxis=dict(gridcolor="#21262D", color="#8B949E"),
                         )
                         st.plotly_chart(fig_bar, use_container_width=True)
-
-                        # Summary table beneath bar
-                        st.table(state_counts.astype(str))
+                        _csv_btn(state_counts, "contact_state_breakdown.csv", "dl_csb")
 
         # ── Agent totals bar (from agents/states if available) ────────────────
         if agents_resp.status_code == 200:
