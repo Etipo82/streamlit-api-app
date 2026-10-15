@@ -1,364 +1,649 @@
+"""
+reporting.py  —  Standalone CXone API reporting app (Streamlit Cloud).
+Customer-facing: credentials entered manually in sidebar.
+Run with:  streamlit run reporting.py
+"""
+
 import streamlit as st
 import requests
 import jwt
 import json
 import base64
-import urllib
+import urllib.parse
 import pandas as pd
-import zipfile
 import io
-import os
 import time
-from datetime import datetime
-from streamlit_extras.metric_cards import style_metric_cards
 import pytz
+from datetime import datetime, timedelta
+
+# ── Page config ────────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="CXone Reporting · NICE",
+    page_icon="📋",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ── Global dark theme ──────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+/* ── Base ── */
+[data-testid="stAppViewContainer"] { background:#0D1117; color:#E6EDF3; }
+[data-testid="stSidebar"]          { background:#161B22; border-right:1px solid #30363D; }
+[data-testid="stHeader"]           { background:transparent; }
+section[data-testid="stSidebar"] * { color:#E6EDF3 !important; }
+
+/* ── Metric cards ── */
+div[data-testid="metric-container"] {
+    background:#161B22; border:1px solid #30363D; border-radius:8px;
+    padding:0.75rem 1rem; margin-bottom:0.5rem;
+}
+div[data-testid="metric-container"] label { color:#8B949E !important; font-size:0.78rem !important; }
+div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
+    color:#E6EDF3 !important; font-size:1.6rem !important; font-weight:700;
+}
+
+/* ── Tables ── */
+table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+thead tr { background:#161B22; }
+th { color:#8B949E !important; font-weight:600; text-transform:uppercase;
+     font-size:0.72rem; letter-spacing:0.05em; padding:0.55rem 0.75rem;
+     border-bottom:1px solid #30363D; text-align:left; }
+td { padding:0.45rem 0.75rem; border-bottom:1px solid #21262D; color:#E6EDF3; }
+tr:hover td { background:#1C2128; }
+
+/* ── Inputs ── */
+input, textarea, select { background:#0D1117 !important; color:#E6EDF3 !important;
+    border:1px solid #30363D !important; border-radius:6px !important; }
+.stTextInput > label, .stDateInput > label, .stTimeInput > label,
+.stSelectbox > label, .stNumberInput > label, .stCheckbox > label {
+    color:#8B949E !important; font-size:0.8rem !important;
+}
+
+/* ── Buttons ── */
+div.stButton > button {
+    background:linear-gradient(135deg,#1F6FEB,#1158C7) !important;
+    color:#fff !important; border:none !important; border-radius:6px !important;
+    font-weight:600 !important; padding:0.45rem 1.1rem !important;
+    transition:opacity .15s ease;
+}
+div.stButton > button:hover { opacity:0.88 !important; }
+
+/* ── Download button ── */
+div.stDownloadButton > button {
+    background:linear-gradient(135deg,#238636,#196F2B) !important;
+    color:#fff !important; border:none !important; border-radius:6px !important;
+    font-weight:600 !important;
+}
+
+/* ── Alerts ── */
+div[data-testid="stAlert"] { border-radius:6px !important; border-left:3px solid !important; }
+
+/* ── Section header ── */
+.sec-header {
+    font-size:0.72rem; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.08em; color:#8B949E;
+    border-bottom:1px solid #30363D; padding-bottom:0.35rem; margin-bottom:0.75rem;
+}
+.page-title {
+    font-size:1.5rem; font-weight:700; color:#E6EDF3; margin:0;
+}
+.page-sub { font-size:0.85rem; color:#8B949E; margin-top:0.15rem; }
+
+/* ── Progress bar ── */
+.stProgress > div > div > div { background:#1F6FEB !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ── Colour palette (mirrors api_page.py) ──────────────────────────────────────
+C_ACC = "#00B5CC"
+C_PRP = "#7C3AED"
+C_OK  = "#3FB950"
+C_WRN = "#D29922"
+C_ERR = "#F85149"
+C_GRY = "#30363D"
+
+# ── Page header ───────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="display:flex;align-items:center;gap:0.75rem;padding-bottom:0.75rem;
+            border-bottom:1px solid #30363D;margin-bottom:1.25rem;">
+    <span style="font-size:1.8rem">📋</span>
+    <div>
+        <div class="page-title">CXone Reporting</div>
+        <div class="page-sub">Call lists · Completed contacts · Reporting jobs</div>
+    </div>
+    <span style="margin-left:auto;background:#1C2128;border:1px solid #30363D;
+                 border-radius:20px;padding:0.2rem 0.75rem;font-size:0.7rem;
+                 font-weight:700;color:#00B5CC;letter-spacing:0.06em;">LIVE</span>
+</div>
+""", unsafe_allow_html=True)
 
 
+def _section(label: str):
+    st.markdown(f'<div class="sec-header">{label}</div>', unsafe_allow_html=True)
 
-st.set_page_config(page_title="My Webpage", page_icon=":calendar:", layout="wide")
 
-# Set page title
-st.title("API Tenant Management")
+# ── Sidebar ────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+    <div style="padding:0.5rem 0 0.75rem;">
+        <div style="font-size:0.9rem;font-weight:700;color:#E6EDF3;">⚡ CXone Portal</div>
+        <div style="font-size:0.68rem;color:#8B949E;text-transform:uppercase;
+                    letter-spacing:0.08em;">NICE CXone · Reporting</div>
+    </div>
+    <hr style="border-color:#30363D;margin:0 0 0.75rem;">
+    """, unsafe_allow_html=True)
 
-# Define issuer options
-issuer_options = {"Non-FedRamp": "cxone.niceincontact.com", "FedRamp": "cxone-gov.niceincontact.com"}
-issuer_type = st.sidebar.selectbox("Select Account Type:", ["Non-FedRamp", "FedRamp"], key="issuer_type")
-issuer = issuer_options[issuer_type]
+    # Account type
+    issuer_options = {
+        "Non-FedRamp": "cxone.niceincontact.com",
+        "FedRamp":     "cxone-gov.niceincontact.com",
+    }
+    issuer_type = st.selectbox("Account Type", list(issuer_options.keys()), key="issuer_type")
+    issuer = issuer_options[issuer_type]
 
-# Debugging toggle
-debug_mode = st.sidebar.checkbox("Enable Debugging", key="debug_mode")
+    st.markdown('<hr style="border-color:#30363D;margin:0.5rem 0;">', unsafe_allow_html=True)
 
-def debug_log(message):
-    """Print debug messages when debugging is enabled."""
+    # Credentials
+    st.markdown('<div style="font-size:0.72rem;font-weight:700;color:#8B949E;'
+                'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;">'
+                '🔑 Credentials</div>', unsafe_allow_html=True)
+
+    accessId         = st.text_input("Access ID",          key="access_id",     placeholder="username@domain")
+    accessKeySecret  = st.text_input("Access Key Secret",  key="access_key_secret",  type="password")
+    client_id        = st.text_input("Client ID",          key="client_id",     placeholder="app client id")
+    client_secret    = st.text_input("Client Secret",      key="client_secret", type="password")
+
+    st.markdown('<hr style="border-color:#30363D;margin:0.5rem 0;">', unsafe_allow_html=True)
+
+    # View selector
+    choice = st.selectbox(
+        "Select Action",
+        ["📞 Fetch Call Lists",
+         "🗑️ Delete Deactivated Lists",
+         "📊 Fetch Completed Contacts",
+         "📋 Reporting Jobs"],
+        key="choice",
+    )
+
+    # Debug
+    st.markdown('<hr style="border-color:#30363D;margin:0.5rem 0;">', unsafe_allow_html=True)
+    debug_mode = st.checkbox("🐛 Debug mode", key="debug_mode")
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+def debug_log(msg):
     if debug_mode:
-        st.write(f"DEBUG: {message}")
+        st.code(f"DEBUG: {msg}", language="text")
+
 
 def iso_to_est(iso_time):
-    if iso_time is None:
+    if not iso_time:
         return None
     try:
-        dt = datetime.strptime(iso_time, '%Y-%m-%dT%H:%M:%S.%fZ')
-        dt = dt.replace(tzinfo=pytz.utc)
-        dt_eastern = dt.astimezone(pytz.timezone('US/Eastern'))
-        return dt_eastern
+        dt = datetime.strptime(iso_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.utc)
+        return dt.astimezone(pytz.timezone("US/Eastern"))
     except Exception as e:
-        debug_log(f"Failed to parse ISO time '{iso_time}': {e}")
+        debug_log(f"iso_to_est failed for '{iso_time}': {e}")
         return None
 
-# Sidebar for authentication
-with st.sidebar:
-    st.write("Credentials")
-    accessId = st.text_input("Enter your Access ID:", key="access_id")
-    accessKeySecret = st.text_input("Enter your Access Key Secret:", type="password", key="access_key_secret")
-    client_id = st.text_input("Enter your Client ID:", key="client_id")
-    client_secret = st.text_input("Enter your Client Secret:", type="password", key="client_secret")
-    
-    choice = st.selectbox("Choose an API call:", [ 
-        "Fetch Call Lists", 
-        "Delete Deactivated Lists", 
-        "Fetch Completed Contacts", 
-        "Reporting Jobs"
-    ])
 
+def _csv_btn(df: pd.DataFrame, filename: str, key: str):
+    st.download_button(
+        f"⬇ Download {filename}",
+        data=df.to_csv(index=False),
+        file_name=filename,
+        mime="text/csv",
+        key=key,
+    )
+
+
+# ── Authentication ─────────────────────────────────────────────────────────────
 def get_auth_headers():
-    """Fetch and return authentication headers."""
     if not all([accessId, accessKeySecret, client_id, client_secret]):
-        st.sidebar.warning("Please enter credentials.")
-        return None
+        return None, None, None
     try:
-        encoded_creds = base64.b64encode(f"{client_id}:{urllib.parse.quote(client_secret)}".encode()).decode()
-        response = requests.post(
+        encoded_creds = base64.b64encode(
+            f"{client_id}:{urllib.parse.quote(client_secret)}".encode()
+        ).decode()
+        resp = requests.post(
             f"https://{issuer}/auth/token",
-            headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": f"Basic {encoded_creds}"},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {encoded_creds}",
+            },
             data={"grant_type": "password", "username": accessId, "password": accessKeySecret},
+            timeout=15,
         )
-        debug_log(f"Auth request sent to {issuer}/auth/token")
-        if response.status_code == 200:
-            token = response.json().get("access_token")
-            debug_log(f"Token received: {token}")
-            return {"Authorization": f"Bearer {token}"}
-        else:
-            st.error(f"Authentication failed: {response.status_code}")
+        debug_log(f"Auth → {resp.status_code}")
+        if resp.status_code != 200:
+            st.sidebar.error(f"Auth failed: {resp.status_code}")
+            return None, None, None
+
+        access_token = resp.json().get("access_token")
+        decoded      = jwt.decode(access_token, options={"verify_signature": False})
+        tenant_id    = decoded.get("tenantId")
+
+        discovery    = requests.get(
+            f"https://{issuer}/.well-known/cxone-configuration?tenantId={tenant_id}",
+            timeout=10,
+        ).json()
+        api_endpoint = discovery["api_endpoint"]
+        endpoint     = api_endpoint + "/incontactAPI/services/v31.0"
+
+        return {"Authorization": f"Bearer {access_token}"}, endpoint, tenant_id
+
     except Exception as e:
-        st.error(f"Error fetching token: {e}")
-    return None
+        st.sidebar.error(f"Auth error: {e}")
+        return None, None, None
 
-def calculate_queue_times(df):
-    current_time_est = datetime.now(pytz.timezone('US/Eastern'))
 
-    df['earliestQueueTime'] = df['earliestQueueTime'].apply(lambda x: current_time_est if x == "N/A" or pd.isna(x) else iso_to_est(x))
-
-    # Ensure datetime type before using .dt accessor
-    if not pd.api.types.is_datetime64_any_dtype(df['earliestQueueTime']):
-        debug_log("earliestQueueTime column is not datetime64; attempting conversion.")
-        df['earliestQueueTime'] = pd.to_datetime(df['earliestQueueTime'], errors='coerce')
-
-    df['queueDuration'] = (current_time_est - df['earliestQueueTime']).dt.total_seconds() / 60.0
-    longest_queue_time = df['queueDuration'].max()
-    average_queue_time = df['queueDuration'].mean()
-    return longest_queue_time, average_queue_time
-
-def calculate_percentage_change(last_value, current_value):
-    if last_value > 0:
-        return (current_value - last_value) / last_value
-    return 0
-
-def fetch_total_records():
-    url = f"https://{issuer}/incontactAPI/services/v31.0/contacts/active?fields=skillName%2C%20stateName"
-    response = requests.get(url, headers=authHeaders)
+# ── Live dashboard (always shown when auth is valid) ──────────────────────────
+def _show_live_dashboard(authHeaders, endpoint):
+    _section("🟢 Live Activity")
     try:
-        return response.json().get('totalRecords', 0)
-    except Exception:
-        return 0
+        skills_resp = requests.get(f"{endpoint}/skills/activity", headers=authHeaders, timeout=10)
+        active_resp = requests.get(
+            f"{endpoint}/contacts/active?fields=skillName,stateName",
+            headers=authHeaders, timeout=10
+        )
+        if skills_resp.status_code != 200:
+            st.warning("Could not load live skills data.")
+            return
 
-def display_summary_metrics_with_delta(current_summary, total_records):
-    st.subheader('Live Dashboard')
+        skills = skills_resp.json().get("skillActivity", [])
+        if not skills:
+            st.info("No active skill data at this time.")
+            return
 
-    if 'last_summary' not in st.session_state:
-        st.session_state['last_summary'] = current_summary.copy()
-    if 'last_total_records' not in st.session_state:
-        st.session_state['last_total_records'] = total_records
+        df_sk = pd.DataFrame(skills)
+        for col in ["queueCount", "agentsAvailable", "agentsWorking"]:
+            df_sk[col] = pd.to_numeric(df_sk.get(col, 0), errors="coerce").fillna(0)
 
-    delta_total_records = total_records - st.session_state['last_total_records']
-    st.session_state['last_total_records'] = total_records
+        total_active   = active_resp.json().get("totalRecords", 0) if active_resp.status_code == 200 else "N/A"
+        in_queue       = int(df_sk["queueCount"].sum())
+        available      = int(df_sk["agentsAvailable"].sum())
+        working        = int(df_sk["agentsWorking"].sum())
 
-    st.write("Displaying data at:", datetime.now())
+        # Queue time
+        est = pytz.timezone("US/Eastern")
+        now_est = datetime.now(est)
+        longest = avg_q = "N/A"
+        if "earliestQueueTime" in df_sk.columns:
+            def _q_mins(t):
+                try:
+                    dt = datetime.strptime(t, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.utc)
+                    return (now_est - dt.astimezone(est)).total_seconds() / 60
+                except Exception:
+                    return None
+            df_sk["_qmin"] = df_sk["earliestQueueTime"].apply(_q_mins)
+            valid = df_sk["_qmin"].dropna()
+            if not valid.empty:
+                longest = f"{valid.max():.1f} min"
+                avg_q   = f"{valid.mean():.1f} min"
 
-    metrics = ['queueCount', 'agentsAvailable', 'agentsWorking', 'longestQueueTime', 'averageQueueTime']
-    metrics_display = metrics + ['Total Records']
-    columns = st.columns(len(metrics_display))
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Active Contacts", total_active)
+        c2.metric("In Queue",        in_queue)
+        c3.metric("Available",       available)
+        c4.metric("Working",         working)
+        c5.metric("Longest Queue",   longest)
+        c6.metric("Avg Queue",       avg_q)
 
-    for i, metric in enumerate(metrics_display):
-        with columns[i]:
-            if metric == 'Total Records':
-                st.metric(label="Active Contacts", value=f"{total_records}", delta=f"{delta_total_records}")
-            else:
-                percentage_change = calculate_percentage_change(
-                    st.session_state['last_summary'].get(metric, 0),
-                    current_summary.get(metric, 0)
-                )
-                delta_value = current_summary.get(metric, 0) - st.session_state['last_summary'].get(metric, 0)
-                st.metric(label=f"Total {metric}", value=f"{current_summary.get(metric, 0):.2f}", delta=f"{delta_value:.2f}")
+        st.markdown(
+            f'<div style="font-size:0.72rem;color:#8B949E;margin-top:0.25rem;">'
+            f'Last refreshed: {now_est.strftime("%b %d, %Y %I:%M %p ET")}</div>',
+            unsafe_allow_html=True,
+        )
 
-                if abs(percentage_change) >= 0.05:
-                    warningMessage = f"Alert: {metric} has changed by {percentage_change * 100:.2f}% since the last check."
-                    debug_log(warningMessage)
-
-    st.session_state['last_summary'] = current_summary.copy()
-
-def fetch_live_dashboard_data():
-    url = f"https://{issuer}/incontactAPI/services/v31.0/skills/activity"
-    try:
-        response = requests.get(url, headers=authHeaders)
-        if response.status_code == 200:
-            skills_data = response.json().get('skillActivity', [])
-            if skills_data:
-                df = pd.DataFrame(skills_data)
-                longest_queue_time, average_queue_time = calculate_queue_times(df)
-                current_summary = df[['queueCount', 'agentsAvailable', 'agentsWorking']].sum()
-                current_summary['longestQueueTime'] = longest_queue_time
-                current_summary['averageQueueTime'] = average_queue_time
-                total_records = fetch_total_records()
-                display_summary_metrics_with_delta(current_summary, total_records)
-                style_metric_cards(background_color="#000000", border_left_color="#686664", border_color="#000000", box_shadow="#F71938")
-        else:
-            st.warning("Could not retrieve dashboard data.")
     except Exception as e:
         st.warning(f"Live dashboard unavailable: {e}")
 
-@st.cache_data(ttl=300)
-def fetch_call_list():
-    """Retrieve call list data."""
-    url = f"https://{issuer}/incontactAPI/services/v31.0/lists/call-lists"
-    response = requests.get(url, headers=authHeaders)
-    return response.json() if response.status_code == 200 else None
 
-def fetch_completed_contacts(start_date, start_time, end_date, end_time, fetch_all, top):
-    """Retrieve completed contacts from API."""
-    skip = 0
-    all_records = []
-    url = f"https://{issuer}/incontactAPI/services/v31.0/contacts/completed"
-    while True:
-        params = {
-            "startDate": f"{start_date} {start_time}",
-            "endDate": f"{end_date} {end_time}",
-            "top": top,
-            "skip": skip,
-        }
-        debug_log(f"Fetching completed contacts from: {url} with params: {params}")
-        response = requests.get(url, headers=authHeaders, params=params)
-        debug_log(f"Response Status: {response.status_code}")
-        if response.status_code != 200:
-            debug_log(f"Error response content: {response.text}")
-            break
-        try:
-            response_json = response.json()
-            contacts = response_json.get("completedContacts", [])
-            if not contacts:
-                break
-            all_records.extend(contacts)
-            debug_log(f"Fetched {len(contacts)} contacts, Total so far: {len(all_records)}")
-            if not fetch_all:
-                break
-            skip += top
-            time.sleep(1)
-        except json.JSONDecodeError:
-            debug_log("Failed to decode JSON response")
-            break
-    if all_records:
-        df = pd.DataFrame(all_records)
-        debug_log(f"Final record count: {len(df)}")
-        st.download_button("Download Completed Contacts CSV", data=df.to_csv(index=False), file_name="completed_contacts.csv", mime="text/csv")
-    else:
-        st.warning("No valid records found.")
-        debug_log("No records retrieved from API.")
+# ── View: Fetch Call Lists ─────────────────────────────────────────────────────
+def _view_call_lists(authHeaders, endpoint):
+    _section("📞 Call Lists")
+    st.caption("Fetch all call lists for this business unit. Deactivated lists are highlighted.")
 
-def download_deactivated_call_lists():
-    """Download deactivated call lists as CSV."""
-    data = fetch_call_list()
-    if data:
-        deactivated_lists = [{"listId": item["listId"]} for item in data.get("callingLists", []) if item.get("status") == "Deactivated"]
-        if deactivated_lists:
-            df = pd.DataFrame(deactivated_lists)
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, index=False)
-            st.download_button("Download Deactivated Call Lists CSV", data=csv_buffer.getvalue(), file_name="deactivated_call_lists.csv", mime="text/csv")
-    else:
-        st.error("No data available to create the CSV file.")
+    if st.button("▶ Fetch Call Lists", type="primary", key="btn_fetch_cl"):
+        with st.spinner("Fetching call lists…"):
+            resp = requests.get(f"{endpoint}/lists/call-lists", headers=authHeaders, timeout=15)
+        if resp.status_code != 200:
+            st.error(f"API error: {resp.status_code}")
+            return
 
-def delete_deactivated_lists_from_csv(uploaded_file):
-    """Delete deactivated lists using a CSV file."""
-    if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
-        list_ids = df["listId"].tolist()
-        deleted_count = 0
-        failed_count = 0
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        data   = resp.json()
+        lists  = data.get("callingLists", [])
+        if not lists:
+            st.info("No call lists found.")
+            return
+
+        df = pd.DataFrame(lists)
+        total      = len(df)
+        active     = int((df.get("status", pd.Series()) == "Active").sum())    if "status" in df.columns else "N/A"
+        deact      = int((df.get("status", pd.Series()) == "Deactivated").sum()) if "status" in df.columns else "N/A"
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Lists",       total)
+        c2.metric("Active",            active)
+        c3.metric("Deactivated",       deact)
+
+        st.markdown("---")
+        _section("All Call Lists")
+        st.table(df.astype(str))
+
+        _csv_btn(df, "call_lists.csv", "dl_cl_all")
+
+        # Deactivated-only download
+        if "status" in df.columns:
+            df_deact = df[df["status"] == "Deactivated"]
+            if not df_deact.empty:
+                st.markdown("---")
+                _section(f"⚠️ Deactivated Lists ({len(df_deact)})")
+                st.caption("Download this file and upload it to the Delete tab to remove these lists.")
+                st.table(df_deact[["listId"] + [c for c in df_deact.columns if c != "listId"]].head(50).astype(str))
+                _csv_btn(df_deact[["listId"]], "deactivated_list_ids.csv", "dl_cl_deact")
+
+
+# ── View: Delete Deactivated Lists ────────────────────────────────────────────
+def _view_delete_lists(authHeaders, endpoint):
+    _section("🗑️ Delete Deactivated Lists")
+    st.caption(
+        "Upload a CSV with a **listId** column (use the download from Fetch Call Lists). "
+        "Each list will be permanently deleted with `forceInactive=true&forceDelete=true`."
+    )
+    st.warning("⚠️ This action is **irreversible**. Double-check the file before proceeding.")
+
+    uploaded = st.file_uploader("Upload list ID CSV", type=["csv"], key="del_upload")
+    if not uploaded:
+        return
+
+    df_ids = pd.read_csv(uploaded)
+    if "listId" not in df_ids.columns:
+        st.error("CSV must contain a `listId` column.")
+        return
+
+    list_ids = df_ids["listId"].dropna().astype(int).tolist()
+    st.info(f"**{len(list_ids)}** list ID(s) loaded from file.")
+    st.table(pd.DataFrame({"listId": list_ids[:20]}).astype(str))
+    if len(list_ids) > 20:
+        st.caption(f"Showing first 20 of {len(list_ids)}.")
+
+    if st.button(f"🗑️ Delete {len(list_ids)} Lists", type="primary", key="btn_del"):
+        deleted, failed = 0, 0
+        progress = st.progress(0)
+        status   = st.empty()
+        results  = []
 
         for idx, list_id in enumerate(list_ids):
-            delete_url = f"https://{issuer}/incontactAPI/services/v31.0/lists/call-lists/{list_id}?forceInactive=true&forceDelete=true"
-            debug_log(f"Sending DELETE request to: {delete_url}")
-            response = requests.delete(delete_url, headers=authHeaders)
-            debug_log(f"Response Status: {response.status_code}")
-            
-            progress = (idx + 1) / len(list_ids)
-            progress_bar.progress(progress)
-            status_text.text(f"Processing {idx + 1}/{len(list_ids)}: List ID {list_id}")
-
-            if response.status_code == 200:
-                deleted_count += 1
-                st.info(f"Successfully deleted list ID: {list_id}")
+            url    = f"{endpoint}/lists/call-lists/{list_id}?forceInactive=true&forceDelete=true"
+            resp   = requests.delete(url, headers=authHeaders, timeout=10)
+            ok     = resp.status_code == 200
+            if ok:
+                deleted += 1
             else:
-                failed_count += 1
-                st.warning(f"Failed to delete list with ID: {list_id}. Status code: {response.status_code}")
+                failed += 1
+            results.append({"listId": list_id, "status": "Deleted" if ok else f"Failed ({resp.status_code})"})
+            progress.progress((idx + 1) / len(list_ids))
+            status.text(f"Processing {idx + 1}/{len(list_ids)} — ID {list_id}")
+            debug_log(f"DELETE {list_id} → {resp.status_code}")
 
-        st.success(f"Completed processing. Deleted {deleted_count} lists.")
-        if failed_count > 0:
-            st.error(f"Failed to delete {failed_count} lists.")
+        progress.empty()
+        status.empty()
 
-def reporting(authHeaders, endpoint):
-    """Handle reporting API services."""
-    st.title("Reporting API Services")
+        if deleted:
+            st.success(f"✅ Successfully deleted **{deleted}** list(s).")
+        if failed:
+            st.error(f"❌ Failed to delete **{failed}** list(s).")
 
-    report_id_input = st.text_input("Enter Report ID:", key="auto_report_id")
-    additional_param = st.text_input("Enter Additional Parameter (Optional):", value="value", key="auto_report_param")
+        st.table(pd.DataFrame(results).astype(str))
+        _csv_btn(pd.DataFrame(results), "delete_results.csv", "dl_del_res")
 
-    if report_id_input:
-        # Step 1: Start the report job
-        payload = {"additionalParam": additional_param}
-        start_url = f"{endpoint}/report-jobs/{report_id_input}?fileType=CSV&includeHeaders=true&appendDate=true&overwrite=true"
-        debug_log(f"Starting report job with URL: {start_url} and payload: {payload}")
-        start_response = requests.post(start_url, headers=authHeaders, json=payload)
-        debug_log(f"Start Job Response Status: {start_response.status_code}")
 
-        if start_response.status_code == 202:
-            job_id = start_response.json().get("jobId")
-            if job_id:
-                st.success(f"Job started successfully. Job ID: {job_id}")
-                status_url = f"{endpoint}/report-jobs/{job_id}"
-                with st.spinner("Waiting for report to be generated..."):
-                    status = ""
-                    file_url = ""
-                    max_retries = 20  # roughly 10 minutes if each wait is 30s
-                    retries = 0
-                    while status != "Finished" and retries < max_retries:
-                        debug_log(f"Checking status from: {status_url}")
-                        status_response = requests.get(status_url, headers=authHeaders)
-                        debug_log(f"Status Check Response: {status_response.status_code}")
-                        if status_response.status_code == 200:
-                            job_data = status_response.json().get("jobResult", {})
-                            status = job_data.get("state", "")
-                            debug_log(f"Current State: {status}")
-                            st.info(f"Report Status: {status}")
-                            if status == "Finished":
-                                file_url = job_data.get("resultFileURL", "")
-                                st.success("Report is ready!")
-                                break
-                        else:
-                            st.warning(f"Failed to fetch report status. Status code: {status_response.status_code}")
-                            break
-                        retries += 1
-                        time.sleep(30)
+# ── View: Fetch Completed Contacts ────────────────────────────────────────────
+def _view_completed_contacts(authHeaders, endpoint):
+    _section("📊 Fetch Completed Contacts")
+    st.caption("Pull a date-range extract of completed contacts and download as CSV.")
 
-                    if file_url:
-                        try:
-                            debug_log(f"Fetching file from: {file_url}")
-                            file_response = requests.get(file_url, headers=authHeaders)
-                            debug_log(f"Download File Status: {file_response.status_code}")
-                            if file_response.status_code == 200:
-                                file_json = file_response.json()
-                                encoded_data = file_json['files']['file']
-                                file_name = file_json['files']['fileName']
-                                decoded_data = base64.b64decode(encoded_data)
-                                st.download_button("Download File", decoded_data, file_name)
-                            else:
-                                st.error(f"Failed to download the file. Status code: {file_response.status_code}")
-                        except Exception as e:
-                            debug_log(f"Download Error: {e}")
-                            st.error(f"Error downloading report: {e}")
-                    elif retries >= max_retries:
-                        st.warning("Timed out waiting for the report to finish.")
-                    else:
-                        st.error("Failed to retrieve file URL.")
-            else:
-                st.warning("Job ID was not returned.")
-        else:
-            st.error(f"Failed to start job. Status code: {start_response.status_code}")
+    c1, c2, c3, c4 = st.columns(4)
+    start_date = c1.date_input("Start Date", (datetime.now() - timedelta(days=1)).date(), key="cc_sd")
+    start_time = c2.time_input("Start Time", datetime.strptime("00:00", "%H:%M").time(), key="cc_st")
+    end_date   = c3.date_input("End Date",   datetime.now().date(),                      key="cc_ed")
+    end_time   = c4.time_input("End Time",   datetime.strptime("23:59", "%H:%M").time(), key="cc_et")
 
-authHeaders = get_auth_headers()
+    col_a, col_b = st.columns(2)
+    fetch_all = col_a.checkbox("Fetch all pages (may be slow for large date ranges)", key="cc_all")
+    top       = col_b.number_input("Records per request", min_value=1000, max_value=10000, value=10000, step=1000, key="cc_top")
 
-# Fetch current live metrics and always show dashboard at top
-if 'authHeaders' in globals() and 'issuer' in globals():
-    fetch_live_dashboard_data()
+    if not st.button("▶ Fetch Completed Contacts", type="primary", key="btn_cc"):
+        return
 
-if authHeaders:
-    if choice == "Reporting Jobs":
-        reporting(authHeaders, f"https://{issuer}/incontactAPI/services/v31.0")
-    elif choice == "Delete Deactivated Lists":
-        uploaded_file = st.file_uploader("Upload CSV file of deactivated list IDs to delete", type=["csv"])
-        if uploaded_file:
-            if st.button("Delete Deactivated Lists"):
-                delete_deactivated_lists_from_csv(uploaded_file)
-    if choice == "Download MP4":
-        pass
-    elif choice == "Fetch Call Lists":
-        if st.button('Fetch Call Lists'):
-            download_deactivated_call_lists()
-    elif choice == "Fetch Completed Contacts":
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            start_date = st.date_input("Start Date").strftime("%m/%d/%Y")
-        with col2:
-            start_time = st.time_input("Start Time").strftime("%H:%M")
-        with col3:
-            end_date = st.date_input("End Date").strftime("%m/%d/%Y")
-        with col4:
-            end_time = st.time_input("End Time").strftime("%H:%M")
-        fetch_all = st.checkbox("Fetch All Records")
-        top = st.number_input("Max Records Per Request (1000-10000):", min_value=1000, max_value=10000, value=10000)
-        if st.button("Fetch Completed Contacts"):
-            fetch_completed_contacts(start_date, start_time, end_date, end_time, fetch_all, top)
+    s_dt = f"{start_date.strftime('%m/%d/%Y')} {start_time.strftime('%H:%M')}"
+    e_dt = f"{end_date.strftime('%m/%d/%Y')} {end_time.strftime('%H:%M')}"
+
+    all_records = []
+    skip        = 0
+    page        = 1
+    url         = f"{endpoint}/contacts/completed"
+    progress    = st.progress(0)
+    status      = st.empty()
+
+    with st.spinner("Fetching contacts…"):
+        while True:
+            params = {"startDate": s_dt, "endDate": e_dt, "top": int(top), "skip": skip}
+            debug_log(f"GET {url} params={params}")
+            resp = requests.get(url, headers=authHeaders, params=params, timeout=30)
+            debug_log(f"→ {resp.status_code}")
+
+            if resp.status_code != 200:
+                st.error(f"API error on page {page}: {resp.status_code}")
+                break
+
+            contacts = resp.json().get("completedContacts", [])
+            if not contacts:
+                break
+
+            all_records.extend(contacts)
+            status.text(f"Page {page} — {len(all_records):,} records fetched…")
+            progress.progress(min(len(all_records) / max(len(all_records) + int(top), 1), 0.95))
+
+            if not fetch_all:
+                break
+            skip += int(top)
+            page += 1
+            time.sleep(0.5)
+
+    progress.progress(1.0)
+    progress.empty()
+    status.empty()
+
+    if not all_records:
+        st.warning("No records found for this date range and criteria.")
+        return
+
+    df = pd.DataFrame(all_records)
+
+    # ── KPIs ──────────────────────────────────────────────────────────────────
+    st.markdown("---")
+    _section("📈 Summary")
+
+    total = len(df)
+    abandoned = int(df["abandoned"].sum()) if "abandoned" in df.columns else "N/A"
+    inbound   = int((df["isOutbound"] == False).sum()) if "isOutbound" in df.columns else "N/A"  # noqa: E712
+
+    def _safe_mean(col, divisor=60):
+        if col not in df.columns:
+            return "N/A"
+        val = pd.to_numeric(df[col], errors="coerce").mean()
+        return f"{val/divisor:.1f} min" if pd.notna(val) else "N/A"
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Total Contacts",  f"{total:,}")
+    k2.metric("Inbound",         f"{inbound:,}" if isinstance(inbound, int) else inbound)
+    k3.metric("Abandoned",       f"{abandoned:,}" if isinstance(abandoned, int) else abandoned)
+    k4.metric("Avg Handle Time", _safe_mean("totalDurationSeconds"))
+    k5.metric("Avg Queue Time",  _safe_mean("inQueueSeconds"))
+
+    # ── Preview table ─────────────────────────────────────────────────────────
+    st.markdown("---")
+    _section(f"Preview (first 50 of {total:,} rows)")
+    preview_cols = [c for c in [
+        "contactId","contactStartDate","skillName","teamName","fromAddress",
+        "endReason","totalDurationSeconds","inQueueSeconds","abandoned","isOutbound",
+    ] if c in df.columns]
+    st.table(df[preview_cols].head(50).astype(str))
+
+    # ── Download ──────────────────────────────────────────────────────────────
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    _csv_btn(df, f"completed_contacts_{ts}.csv", "dl_cc")
+    st.success(f"✅ **{total:,}** completed contacts ready for download.")
+
+
+# ── View: Reporting Jobs ──────────────────────────────────────────────────────
+def _view_reporting_jobs(authHeaders, endpoint):
+    _section("📋 Reporting Jobs")
+    st.caption(
+        "Enter a Report ID to start a job. The app polls until the report is finished "
+        "then provides a download link."
+    )
+
+    col_a, col_b = st.columns(2)
+    report_id       = col_a.text_input("Report ID", key="rj_id",    placeholder="e.g. 12345")
+    additional_param = col_b.text_input("Additional Parameter (optional)", key="rj_param", value="value")
+
+    if not st.button("▶ Run Report", type="primary", key="btn_rj") or not report_id.strip():
+        if not report_id.strip() and st.session_state.get("btn_rj"):
+            st.warning("Please enter a Report ID.")
+        return
+
+    start_url = (
+        f"{endpoint}/report-jobs/{report_id.strip()}"
+        "?fileType=CSV&includeHeaders=true&appendDate=true&overwrite=true"
+    )
+    payload = {"additionalParam": additional_param}
+    debug_log(f"POST {start_url}  payload={payload}")
+
+    with st.spinner("Starting report job…"):
+        start_resp = requests.post(start_url, headers=authHeaders, json=payload, timeout=15)
+    debug_log(f"Start → {start_resp.status_code}")
+
+    if start_resp.status_code != 202:
+        st.error(f"Failed to start job. Status: {start_resp.status_code}  {start_resp.text[:200]}")
+        return
+
+    job_id = start_resp.json().get("jobId")
+    if not job_id:
+        st.warning("No job ID returned.")
+        return
+
+    st.success(f"Job started — **Job ID:** `{job_id}`")
+
+    # ── Poll for completion ────────────────────────────────────────────────────
+    status_url = f"{endpoint}/report-jobs/{job_id}"
+    max_polls  = 20
+    poll_secs  = 30
+    file_url   = ""
+    progress   = st.progress(0)
+    status_box = st.empty()
+
+    for attempt in range(1, max_polls + 1):
+        debug_log(f"Poll {attempt}/{max_polls} → {status_url}")
+        poll_resp = requests.get(status_url, headers=authHeaders, timeout=15)
+        debug_log(f"Poll → {poll_resp.status_code}")
+
+        if poll_resp.status_code != 200:
+            st.error(f"Status check failed: {poll_resp.status_code}")
+            break
+
+        job_data = poll_resp.json().get("jobResult", {})
+        state    = job_data.get("state", "Unknown")
+        status_box.info(f"Report status: **{state}**  (check {attempt}/{max_polls})")
+        progress.progress(attempt / max_polls)
+
+        if state == "Finished":
+            file_url = job_data.get("resultFileURL", "")
+            break
+
+        if state in ("Failed", "Error"):
+            st.error(f"Report job failed with state: {state}")
+            break
+
+        time.sleep(poll_secs)
+
+    progress.empty()
+    status_box.empty()
+
+    if not file_url:
+        if attempt >= max_polls:
+            st.warning("Timed out waiting for the report. Try again or check the Report Manager.")
+        return
+
+    # ── Download the result file ──────────────────────────────────────────────
+    st.success("✅ Report is ready!")
+    with st.spinner("Downloading report file…"):
+        file_resp = requests.get(file_url, headers=authHeaders, timeout=30)
+    debug_log(f"File download → {file_resp.status_code}")
+
+    if file_resp.status_code != 200:
+        st.error(f"Failed to download file: {file_resp.status_code}")
+        return
+
+    try:
+        file_json    = file_resp.json()
+        encoded_data = file_json["files"]["file"]
+        file_name    = file_json["files"]["fileName"]
+        decoded_data = base64.b64decode(encoded_data)
+
+        st.download_button(
+            f"⬇ Download {file_name}",
+            data=decoded_data,
+            file_name=file_name,
+            key="dl_rj",
+        )
+    except Exception as e:
+        st.error(f"Error parsing report file: {e}")
+        debug_log(f"File parse error: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Main flow
+# ══════════════════════════════════════════════════════════════════════════════
+
+if not all([accessId, accessKeySecret, client_id, client_secret]):
+    st.info("👈  Enter your CXone credentials in the sidebar to get started.")
+    st.stop()
+
+# Authenticate once per session (or when creds change)
+cred_key = f"{accessId}|{client_id}|{issuer}"
+if st.session_state.get("_auth_key") != cred_key:
+    with st.spinner("Authenticating…"):
+        authHeaders, endpoint, tenant_id = get_auth_headers()
+    if authHeaders:
+        st.session_state["_auth_key"]     = cred_key
+        st.session_state["_authHeaders"]  = authHeaders
+        st.session_state["_endpoint"]     = endpoint
+        st.session_state["_tenant_id"]    = tenant_id
+        st.sidebar.success(f"✅ Connected  ·  Tenant: {tenant_id}")
+    else:
+        st.session_state.pop("_auth_key", None)
+        st.stop()
 else:
-    st.warning("Please enter credentials in the sidebar before proceeding.")
+    authHeaders = st.session_state["_authHeaders"]
+    endpoint    = st.session_state["_endpoint"]
+    tenant_id   = st.session_state.get("_tenant_id", "")
+    st.sidebar.success(f"✅ Connected  ·  Tenant: {tenant_id}")
+
+# ── Live dashboard (always shown) ──────────────────────────────────────────────
+_show_live_dashboard(authHeaders, endpoint)
+
+st.markdown("---")
+
+# ── Route to selected view ─────────────────────────────────────────────────────
+if   choice == "📞 Fetch Call Lists":
+    _view_call_lists(authHeaders, endpoint)
+elif choice == "🗑️ Delete Deactivated Lists":
+    _view_delete_lists(authHeaders, endpoint)
+elif choice == "📊 Fetch Completed Contacts":
+    _view_completed_contacts(authHeaders, endpoint)
+elif choice == "📋 Reporting Jobs":
+    _view_reporting_jobs(authHeaders, endpoint)
